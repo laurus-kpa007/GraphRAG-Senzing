@@ -45,10 +45,13 @@ def test_agentic_vs_standard():
     # Load existing data
     print("Loading existing data...")
     pipeline.initialize()
-    pipeline.load_chunks_from_lancedb()
-    pipeline.load_entities()
+    result = pipeline.load_existing_data()
 
-    print(f"Loaded {len(pipeline._chunks)} chunks and {len(pipeline._entities)} entities\n")
+    if not result["success"]:
+        print(f"ERROR: {result['message']}")
+        return
+
+    print(f"{result['message']}\n")
 
     # Test each query in both modes
     for i, query in enumerate(test_queries, 1):
@@ -110,10 +113,13 @@ def test_interactive_agentic():
 
     pipeline = AgenticPipeline()
     pipeline.initialize()
-    pipeline.load_chunks_from_lancedb()
-    pipeline.load_entities()
+    result = pipeline.load_existing_data()
 
-    print(f"Loaded {len(pipeline._chunks)} chunks and {len(pipeline._entities)} entities\n")
+    if not result["success"]:
+        print(f"ERROR: {result['message']}")
+        return
+
+    print(f"{result['message']}\n")
 
     # Run interactive in agentic mode
     pipeline.interactive(agentic=True)

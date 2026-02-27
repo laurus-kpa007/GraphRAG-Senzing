@@ -118,14 +118,17 @@ class OllamaLLM:
         self.max_tokens = max_tokens
         self._client = httpx.Client(timeout=timeout)
 
-    def generate(self, prompt: str, *, system: Optional[str] = None) -> str:
+    def generate(self, prompt: str, *, system: Optional[str] = None, temperature: Optional[float] = None) -> str:
         """Generate a response from the LLM."""
+        # Use provided temperature or fallback to instance default
+        temp = temperature if temperature is not None else self.temperature
+
         payload = {
             "model": self.model,
             "prompt": prompt,
             "stream": False,
             "options": {
-                "temperature": self.temperature,
+                "temperature": temp,
                 "num_predict": self.max_tokens,
             },
         }

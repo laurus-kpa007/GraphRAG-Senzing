@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \":*)",
+      "Bash(git add requirements.txt tools/ src/pipeline.py src/loaders.py src/embeddings.py config.toml)",
+      "Bash(git push origin claude/add-project-documentation-pZL3L)",
+      "Bash(git checkout -b feat/agentic-graphrag)",
+      "Bash(git add src/agentic/ docs/agentic_graphrag_design.md test_agentic.py config.toml README.md src/pipeline.py)",
+      "Bash(git commit:*)",
+      "Bash(git push origin feat/agentic-graphrag)",
+      "Bash(python -c \"from src.agentic import AgenticOrchestrator; print\\(''Import successful!''\\)\")",
+      "Bash(pip install httpx)",
+      "Bash(python -c \"from src.agentic import AgenticOrchestrator; print\\(''Import successful''\\)\")",
+      "Bash(git add src/agentic/base_agent.py src/agentic/orchestrator.py install_deps.bat)",
+      "Bash(git add QUICKSTART.md)",
+      "Bash(git add app_agentic.py app_agentic_v2.py README.md)",
+      "Bash(netstat -ano)",
+      "Bash(git add run_webui.bat run_webui.sh WEBUI_GUIDE.md)",
+      "Bash(chmod +x port_utils.sh)",
+      "Bash(git add check_port.bat kill_streamlit.bat port_utils.sh)",
+      "Bash(python test_webui_quick.py)",
+      "Bash(pip install lancedb pyarrow polars)",
+      "Bash(pip install chardet python-docx)",
+      "Bash(git add -A)"
+    ]
+  }
+}

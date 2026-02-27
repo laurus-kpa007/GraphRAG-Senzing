@@ -288,19 +288,21 @@ with st.sidebar:
                 pipeline = AgenticPipeline()
                 pipeline.initialize()
 
-                # Check if data exists
-                if pathlib.Path("data/lancedb").exists():
-                    pipeline.load_chunks_from_lancedb()
-                    pipeline.load_entities()
+                # Load existing data
+                result = pipeline.load_existing_data()
 
-                    st.session_state.pipeline = pipeline
-                    st.success(f"✓ Loaded {len(pipeline._chunks)} chunks, {len(pipeline._entities)} entities")
+                st.session_state.pipeline = pipeline
+
+                if result["success"]:
+                    st.success(f"✓ {result['message']}")
                 else:
-                    st.warning("⚠️ No data found. Process documents first.")
-                    st.session_state.pipeline = pipeline
+                    st.warning(f"⚠️ {result['message']}")
 
             except Exception as e:
                 st.error(f"❌ Initialization failed: {e}")
+                import traceback
+                with st.expander("Error Details"):
+                    st.code(traceback.format_exc())
 
     if st.session_state.pipeline:
         st.success("✓ Pipeline ready")

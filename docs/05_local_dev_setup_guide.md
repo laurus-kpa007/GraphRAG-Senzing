@@ -81,36 +81,35 @@ git clone https://github.com/laurus-kpa007/GraphRAG-Senzing.git
 cd GraphRAG-Senzing
 ```
 
-### 2.2 방법 A: setup.sh 자동 설치 (권장)
+### 2.2 방법 A: requirements.txt 자동 설치 (권장)
+
+```bash
+# Python 패키지 일괄 설치
+pip install -r requirements.txt
+
+# spaCy 영어 모델
+python -m spacy download en_core_web_md
+
+# 한국어 모델 (한국어 문서 처리 시)
+python -m pip install https://github.com/explosion/spacy-models/releases/download/ko_core_news_lg-3.8.0/ko_core_news_lg-3.8.0-py3-none-any.whl
+
+# 필요한 디렉토리 생성
+mkdir -p data/documents data/cache data/lancedb data/output data/uploads
+```
+
+### 2.2 방법 B: setup.sh 스크립트 (Linux/macOS)
 
 ```bash
 bash setup.sh
 ```
 
 이 스크립트가 수행하는 작업:
-1. Python 패키지 설치 (python-docx, lancedb, spacy, httpx 등)
-2. spaCy 영어 모델 다운로드 (`en_core_web_md`)
-3. spaCy 한국어 모델 다운로드 (`ko_core_news_lg`)
-4. Ollama 모델 다운로드 확인
-5. 데이터 디렉토리 생성
+1. Python 패키지 설치
+2. spaCy 영어/한국어 모델 다운로드 (SSL 에러 시 자동 폴백)
+3. Ollama 모델 다운로드 확인
+4. 데이터 디렉토리 생성
 
-### 2.2 방법 B: 수동 설치
-
-```bash
-# 핵심 의존성
-pip install python-docx chardet markdown-it-py httpx lancedb pyarrow \
-    numpy streamlit spacy gensim networkx pydantic \
-    beautifulsoup4 requests requests-cache rdflib polars
-
-# spaCy 모델
-python -m spacy download en_core_web_md
-
-# 한국어 NLP가 필요한 경우
-python -m spacy download ko_core_news_lg
-
-# 디렉토리 생성
-mkdir -p data/documents data/cache data/lancedb data/output data/uploads
-```
+**Windows PowerShell에서는 방법 A (requirements.txt) 사용을 권장합니다.**
 
 ### 2.3 설치 검증
 
@@ -421,6 +420,31 @@ for e in top:
     print(f"  {e['text']} [{e['label']}] × {e['count']}")
 ```
 
+### 5.7 그래프 시각화
+
+파이프라인 실행 후 생성된 Knowledge Graph를 인터랙티브 HTML로 시각화할 수 있습니다:
+
+```bash
+# pyvis 설치 (처음 한 번만)
+pip install pyvis
+
+# ERKG (Entity-Relation Knowledge Graph) 시각화
+python tools/visualize_graph.py --graph erkg
+
+# Lexical Graph (TextRank) 시각화
+python tools/visualize_graph.py --graph lex
+
+# 정적 PNG 이미지로 저장 (matplotlib 필요)
+python tools/visualize_graph.py --graph erkg --format png
+```
+
+생성된 HTML 파일 (`data/output/erkg.html`)을 브라우저에서 열면:
+- **노드**: 엔티티 (크기 = 언급 빈도, 색상 = 타입)
+- **엣지**: 엔티티 간 관계
+- **인터랙티브**: 드래그, 줌, 호버로 상세 정보 확인
+
+자세한 내용은 [`tools/README.md`](../tools/README.md)를 참조하세요.
+
 ---
 
 ## 6. 프로젝트 구조 상세
@@ -437,6 +461,11 @@ GraphRAG-Senzing/
 ├── tests/                       ← 통합 테스트 (25개)
 │   ├── __init__.py
 │   └── test_integration.py
+│
+├── tools/                       ← 유틸리티 도구
+│   ├── __init__.py
+│   ├── visualize_graph.py       ← 그래프 시각화 도구
+│   └── README.md
 │
 ├── data/
 │   ├── documents/               ← 입력 문서 (여기에 파일 추가)

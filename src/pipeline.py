@@ -854,6 +854,69 @@ class AgenticPipeline:
 
         return result
 
+    # ── Helper Methods for Web UI ────────────────────────────────────
+
+    def load_existing_data(self) -> dict[str, Any]:
+        """
+        Load existing data from LanceDB and entity store.
+
+        Returns:
+            dict with status and counts
+        """
+        result = {"success": False, "chunks": 0, "entities": 0, "message": ""}
+
+        try:
+            # Load chunks from LanceDB
+            if pathlib.Path(self.config["vect"]["lancedb_uri"]).exists():
+                table = self._get_or_create_table()
+                import polars as pl
+                df = pl.from_arrow(table.to_arrow())
+                self._chunks = df.to_dicts()
+                result["chunks"] = len(self._chunks)
+                logger.info("Loaded %d chunks from LanceDB", len(self._chunks))
+            else:
+                result["message"] = "LanceDB not found. Process documents first."
+                return result
+
+            # Load entities
+            ent_path = pathlib.Path(self.config["ent"]["store_path"])
+            if ent_path.exists():
+                import json
+                entities = []
+                with open(ent_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        if line.strip():
+                            entities.append(json.loads(line))
+                self._entities = entities
+                result["entities"] = len(entities)
+                logger.info("Loaded %d entities", len(entities))
+            else:
+                logger.warning("Entity store not found")
+
+            result["success"] = True
+            result["message"] = f"Loaded {result['chunks']} chunks, {result['entities']} entities"
+
+        except Exception as e:
+            result["message"] = f"Error loading data: {e}"
+            logger.error("Failed to load existing data: %s", e)
+
+        return result
+
+    def get_status(self) -> dict[str, Any]:
+        """
+        Get current pipeline status.
+
+        Returns:
+            dict with initialization status and data counts
+        """
+        return {
+            "initialized": self._is_initialized,
+            "chunks_loaded": len(self._chunks),
+            "entities_loaded": len(self._entities),
+            "lancedb_exists": pathlib.Path(self.config["vect"]["lancedb_uri"]).exists(),
+            "entity_store_exists": pathlib.Path(self.config["ent"]["store_path"]).exists(),
+        }
+
     # ── Interactive Session ──────────────────────────────────────────
 
     def interactive(self, *, agentic: bool = False) -> None:

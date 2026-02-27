@@ -422,14 +422,19 @@ with st.sidebar:
                 pipeline = AgenticPipeline()
                 pipeline.initialize()
 
-                if pathlib.Path("data/lancedb").exists():
-                    pipeline.load_chunks_from_lancedb()
-                    pipeline.load_entities()
+                # Load existing data
+                result = pipeline.load_existing_data()
 
                 st.session_state.pipeline = pipeline
-                st.success("✓ Ready!")
+
+                if result["success"]:
+                    st.success(f"✓ {result['message']}")
+                else:
+                    st.warning(f"⚠️ {result['message']}")
             except Exception as e:
                 st.error(f"❌ {e}")
+                import traceback
+                st.code(traceback.format_exc())
 
     # Status
     if st.session_state.pipeline:
