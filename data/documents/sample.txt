@@ -1,0 +1,13 @@
+Ollama is a tool for running large language models locally. It supports a wide range of models including Gemma, Llama, Mistral, and many others. Ollama provides a simple API for model interaction, including text generation and embedding creation.
+
+The Gemma 3 model family, developed by Google, offers strong multilingual capabilities. The 27B parameter variant (gemma3:27b) provides excellent performance for complex reasoning tasks while being efficient enough to run on consumer-grade GPUs with quantization.
+
+BGE-M3 is a versatile embedding model developed by BAAI (Beijing Academy of Artificial Intelligence). It supports over 100 languages and provides dense, sparse, and multi-vector retrieval capabilities. The model produces 1024-dimensional embeddings and supports sequences up to 8192 tokens.
+
+LanceDB is a serverless vector database built on Lance, an open-source columnar data format. It supports full-text search, vector search, and hybrid search. LanceDB integrates well with Python data science tools and provides efficient storage and retrieval for embeddings.
+
+Knowledge graphs represent information as nodes (entities) and edges (relationships). NetworkX is a Python library for creating, manipulating, and studying complex networks. When used in a GraphRAG pipeline, NetworkX enables graph-based reasoning including shortest path computation, community detection, and PageRank-based entity ranking.
+
+spaCy is an industrial-strength NLP library for Python. It provides fast tokenization, part-of-speech tagging, named entity recognition, and dependency parsing. GLiNER extends spaCy with zero-shot named entity recognition capabilities, allowing extraction of custom entity types without training.
+
+DSPy is a framework for programming language models. It provides signatures, modules, and optimizers that enable structured interaction with LLMs. In a GraphRAG pipeline, DSPy manages the prompt engineering and response generation phases.

@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Data (generated)
+data/lancedb/
+data/cache/
+data/output/
+data/uploads/
+
+# Keep sample documents
+!data/documents/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

@@ -1,0 +1,6 @@
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix strw: <https://github.com/DerwenAI/strwythura/wiki/vocab#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+
+strw:GraphRAG a skos:ConceptScheme ;
+    skos:prefLabel "GraphRAG Document Analysis" .

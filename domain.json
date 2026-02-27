@@ -1,0 +1,8 @@
+{
+    "name": "GraphRAG 문서 분석",
+    "description": "워드, 텍스트, 마크다운 문서를 Knowledge Graph로 분석하고 Ollama gemma3:27b와 BGE-M3 임베딩을 활용한 Agentic GraphRAG Q&A 파이프라인",
+    "lang": "ko",
+    "taxonomy": "data/domain.ttl",
+    "data_sources": [],
+    "content_sources": []
+}

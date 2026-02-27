@@ -1,0 +1,72 @@
+## GraphRAG-Senzing Configuration
+## strwythura 기반 커스텀 파이프라인 설정
+## strwythura의 정확한 config key 이름을 사용
+
+[sz]
+grpc_server = "localhost:8261"
+er_path = "data/output/er.json"
+thesaurus_path = "data/output/thesaurus.ttl"
+
+[erkg]
+erkg_path = "data/output/erkg.json"
+
+[ctx]
+domain_class = "DomainContext"
+domain_bundle = "domain.json"
+
+[nlp]
+parser_class = "Parser"
+spacy_model = "en_core_web_md"
+# 한국어 사용 시: spacy_model = "ko_core_news_lg"
+# 설치: python -m spacy download ko_core_news_lg
+lex_path = "data/output/lex.json"
+gliner_model = "urchade/gliner_small-v2.1"
+chunk_size = 1024
+
+[tr]
+tr_alpha = 0.85
+tr_lookback = 3
+
+[ent]
+store_path = "data/output/ent.json"
+vec_path = "data/output/ent.vec"
+w2v_path = "data/output/ent.w2v"
+
+[vect]
+lancedb_uri = "data/lancedb"
+chunk_table = "chunk"
+chunk_size = 1024
+fts_column = "text"
+
+[scraper]
+cache_expire = 604800
+cache_path = "data/cache"
+
+[vis]
+html_path = "data/output/erkg.html"
+html_height = "900px"
+html_width = "100%"
+
+[rag]
+lm_name = "ollama_chat/gemma3:27b"
+api_base = "http://localhost:11434"
+temperature = 0.0
+max_tokens = 3000
+max_chunks = 11
+num_perm = 128
+lsh_top_k_question = 9
+lsh_top_k_lemma = 3
+w2v_top_k = 20
+w2v_min_dist = 0.33
+
+[opik]
+base_url = "http://localhost:5173/api"
+
+[prof]
+use_pyinst = false
+
+## 커스텀 확장 설정 (strwythura 외부)
+[embed]
+model = "bona/bge-m3:latest"
+dim = 1024
+ollama_url = "http://localhost:11434"
