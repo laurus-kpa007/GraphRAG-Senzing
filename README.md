@@ -106,6 +106,28 @@ A: 형제자매(누나)가 결혼하면 경조금은 50만원입니다.
    Retrieved: 15 docs, Relevant: 8 docs
 ```
 
+### 🌐 Modern Web UI (New!)
+```bash
+# Enhanced Agentic UI with real-time visualization
+streamlit run app_agentic_v2.py
+
+# Simple Agentic UI
+streamlit run app_agentic.py
+
+# Original UI
+streamlit run app.py
+```
+
+**Web UI Features**:
+- 📊 Real-time agent execution visualization
+- 🎯 Step-by-step reasoning chain display
+- 📚 Interactive citation cards with relevance scores
+- ✅ Validation results and confidence metrics
+- 🔄 Full execution timeline and audit trail
+- 📈 Metrics dashboard (retrieved/relevant docs, hops, confidence)
+- ⚖️ Side-by-side comparison (Agentic vs Standard)
+- 🎨 Modern glassmorphism UI with animations
+
 ### Other Commands
 ```bash
 # Check system status
@@ -147,11 +169,14 @@ GraphRAG-Senzing/
 │   └── output/              # Pipeline outputs (generated)
 ├── docs/
 │   └── agentic_graphrag_design.md  # Architecture documentation
-├── app.py                   # Streamlit web UI
+├── app.py                   # Original Streamlit UI
+├── app_agentic.py           # Agentic RAG Web UI
+├── app_agentic_v2.py        # Enhanced Agentic UI (modern design)
 ├── run_pipeline.py          # CLI runner
 ├── test_agentic.py          # Agentic mode testing
 ├── config.toml              # Configuration
 ├── requirements.txt         # Python dependencies
+├── QUICKSTART.md            # Quick start guide
 └── domain.json              # Domain metadata
 ```
 
