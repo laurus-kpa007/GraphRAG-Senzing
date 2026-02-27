@@ -492,10 +492,84 @@ python run_pipeline.py data/documents/
 | `ConnectError` | Ollama 서버 미실행 | `ollama serve` 후 재시도 |
 | 한글 깨짐 | 인코딩 문제 | 파일을 UTF-8로 저장 |
 | VRAM 부족 | 27B 모델 너무 큼 | `gemma3:12b` 또는 `gemma3:4b` 사용 |
-| spaCy 모델 에러 | 모델 미설치 | `python -m spacy download en_core_web_md` |
+| spaCy 모델 에러 | 모델 미설치 | 아래 [8.1 spaCy SSL 에러 해결] 참조 |
 | LanceDB 에러 | 테이블 스키마 불일치 | `rm -rf data/lancedb/` 후 재실행 |
 | 임베딩 차원 에러 | config.toml dim 불일치 | `[embed] dim`과 모델 출력 차원 맞추기 |
 | Streamlit 접속 불가 | 포트 충돌 | `streamlit run app.py --server.port 8502` |
+
+### 8.1 spaCy 모델 다운로드 SSL 에러 해결
+
+`python -m spacy download` 실행 시 아래 에러가 발생하는 경우:
+
+```
+requests.exceptions.SSLError: HTTPSConnectionPool(host='raw.githubusercontent.com', port=443):
+Max retries exceeded ... SSLCertVerificationError ... certificate verify failed:
+unable to get local issuer certificate
+```
+
+**방법 1: pip로 직접 whl 설치 (가장 간단)**
+
+```bash
+# 영어 모델
+pip install https://github.com/explosion/spacy-models/releases/download/en_core_web_md-3.8.0/en_core_web_md-3.8.0-py3-none-any.whl
+
+# 한국어 모델
+pip install https://github.com/explosion/spacy-models/releases/download/ko_core_news_lg-3.8.0/ko_core_news_lg-3.8.0-py3-none-any.whl
+```
+
+위 명령도 SSL 에러가 나면 `--trusted-host` 추가:
+
+```bash
+pip install --trusted-host github.com --trusted-host objects.githubusercontent.com \
+    https://github.com/explosion/spacy-models/releases/download/en_core_web_md-3.8.0/en_core_web_md-3.8.0-py3-none-any.whl
+```
+
+**방법 2: 인증서 갱신 (근본 해결)**
+
+```bash
+# certifi 설치/갱신
+pip install --upgrade certifi
+
+# SSL 인증서 경로 확인
+python -c "import certifi; print(certifi.where())"
+
+# 환경변수에 등록 (~/.bashrc 또는 ~/.zshrc에 추가)
+export SSL_CERT_FILE=$(python -c "import certifi; print(certifi.where())")
+export REQUESTS_CA_BUNDLE=$SSL_CERT_FILE
+
+# macOS의 경우 추가로 실행
+# /Applications/Python\ 3.XX/Install\ Certificates.command
+```
+
+등록 후 정상 설치:
+
+```bash
+python -m spacy download en_core_web_md
+```
+
+**방법 3: 브라우저에서 수동 다운로드**
+
+1. 브라우저에서 접속:
+   - 영어: https://github.com/explosion/spacy-models/releases/tag/en_core_web_md-3.8.0
+   - 한국어: https://github.com/explosion/spacy-models/releases/tag/ko_core_news_lg-3.8.0
+2. `.whl` 파일 다운로드
+3. 로컬 설치:
+
+```bash
+pip install ./en_core_web_md-3.8.0-py3-none-any.whl
+pip install ./ko_core_news_lg-3.8.0-py3-none-any.whl
+```
+
+**방법 4: spaCy 없이 실행**
+
+spaCy 모델 설치가 어려운 환경에서는 NLP를 건너뛰고 벡터 검색만 사용:
+
+```bash
+python run_pipeline.py --skip-nlp data/documents/
+```
+
+이 모드에서도 BGE-M3 임베딩 기반 벡터 유사도 검색으로 Q&A가 동작합니다.
+엔티티 추출 기반의 그래프 보강만 빠집니다.
 
 ---
 
