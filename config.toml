@@ -71,3 +71,15 @@ use_pyinst = true  # Enable pyinstrument profiling (saves to data/output/profile
 model = "bge-m3:latest"
 dim = 1024
 ollama_url = "http://192.168.68.68:11434"
+
+## Agentic RAG 설정 (Multi-agent pipeline)
+[agentic]
+enabled = true
+max_retries = 3  # Reflection agent retry limit
+max_reasoning_hops = 5  # Multi-hop reasoning limit
+grading_threshold = 0.7  # Document relevance threshold (0.0 - 1.0)
+validation_threshold = 0.8  # Answer validation threshold (0.0 - 1.0)
+enable_web_search = false  # Fallback to web search (not implemented)
+enable_reflection = true  # Retry on validation failure
+enable_validation = true  # Enable validation agent
+enable_tracing = true  # Print execution trace

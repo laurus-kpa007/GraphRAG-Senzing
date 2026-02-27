@@ -17,6 +17,7 @@ import pyarrow as pa
 
 from .loaders import DocumentLoader
 from .embeddings import OllamaEmbedding, OllamaLLM
+from .agentic import AgenticOrchestrator
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +78,9 @@ class AgenticPipeline:
         # Profiling
         self._profiler: Optional[Profiler] = None
         self._use_profiling = self.config.get("prof", {}).get("use_pyinst", False)
+
+        # Agentic RAG orchestrator (lazy init)
+        self._agentic_orchestrator: Optional[AgenticOrchestrator] = None
 
     # ── Prerequisites ────────────────────────────────────────────────
 
@@ -397,14 +401,33 @@ class AgenticPipeline:
         results.sort(key=lambda x: x.get("keyword_score", 0), reverse=True)
         return results[:top_k]
 
-    def query(self, question: str, *, top_k: int = 0) -> dict:
+    def query(self, question: str, *, top_k: int = 0, agentic: bool = False) -> dict:
         """
-        Hybrid GraphRAG query:
+        GraphRAG query with optional Agentic mode.
+
+        Args:
+            question: User question
+            top_k: Max chunks to retrieve (0 = use config default)
+            agentic: Enable Agentic RAG pipeline (planning, validation, reflection)
+
+        Standard mode (agentic=False):
         1. Vector search for semantic similarity (BGE-M3)
         2. Keyword search for exact term matching
-        3. Entity context augmentation
+        3. Graph expansion via entity co-occurrence
         4. LLM answer generation (gemma3:27b)
+
+        Agentic mode (agentic=True):
+        1. Planning Agent: Query decomposition & strategy selection
+        2. Retrieval Orchestrator: Hybrid search (vector + keyword + graph)
+        3. Grader Agent: Document relevance assessment (CRAG)
+        4. Reasoning Agent: Multi-hop reasoning with interleaved retrieval
+        5. Validation Agent: Fact-checking & consistency verification (Self-RAG)
+        6. Reflection Agent: Retry on validation failure (up to 3 times)
         """
+        if agentic:
+            return self._query_agentic(question, top_k=top_k)
+
+        # Standard hybrid search (existing implementation)
         if top_k <= 0:
             top_k = self.config["rag"].get("max_chunks", 9)
 
@@ -757,16 +780,98 @@ class AgenticPipeline:
             # Stop profiling and save report
             self._stop_profiling()
 
+    # ── Agentic RAG Mode ─────────────────────────────────────────────
+
+    def _query_agentic(self, question: str, *, top_k: int = 0) -> dict:
+        """
+        Execute Agentic RAG pipeline.
+
+        Multi-agent workflow with planning, validation, and reflection.
+        """
+        if top_k <= 0:
+            top_k = self.config["rag"].get("max_chunks", 9)
+
+        # Initialize orchestrator (lazy)
+        if self._agentic_orchestrator is None:
+            # Create retriever function that wraps hybrid search
+            def retriever(query: str, strategy: str) -> list[dict]:
+                """Hybrid retrieval function for agentic mode."""
+                # Vector search
+                table = self._get_or_create_table()
+                q_vec = self.embedder.embed_text(query)
+
+                try:
+                    vector_results = table.search(q_vec).limit(top_k).to_list()
+                except Exception as e:
+                    logger.warning("Vector search failed: %s", e)
+                    vector_results = []
+
+                # Strategy-based retrieval
+                if strategy == "vector":
+                    return vector_results
+                elif strategy == "keyword":
+                    return self._keyword_search(query, top_k=top_k)
+                elif strategy == "graph":
+                    # Graph expansion from vector results
+                    return self._graph_search(query, vector_results)
+                else:  # "hybrid" (default)
+                    # Merge all three
+                    keyword_results = self._keyword_search(query, top_k=max(3, top_k // 2))
+                    seen_uids = set()
+                    merged = []
+
+                    for r in vector_results + keyword_results:
+                        uid = r.get("uid")
+                        if uid not in seen_uids:
+                            merged.append(r)
+                            seen_uids.add(uid)
+
+                    # Graph expansion
+                    graph_results = self._graph_search(query, merged[:top_k // 2])
+                    for r in graph_results:
+                        uid = r.get("uid")
+                        if uid not in seen_uids:
+                            merged.append(r)
+                            seen_uids.add(uid)
+
+                    return merged[:top_k * 2]  # Allow more docs for grading
+
+            # Create orchestrator
+            agentic_config = self.config.get("agentic", {})
+            self._agentic_orchestrator = AgenticOrchestrator(
+                llm=self.llm,
+                retriever=retriever,
+                config=agentic_config,
+                verbose=agentic_config.get("enable_tracing", False),
+            )
+
+        # Execute agentic pipeline
+        result = self._agentic_orchestrator.query(
+            question,
+            enable_reflection=self.config.get("agentic", {}).get("enable_reflection", True),
+            enable_validation=self.config.get("agentic", {}).get("enable_validation", True),
+        )
+
+        return result
+
     # ── Interactive Session ──────────────────────────────────────────
 
-    def interactive(self) -> None:
-        """Run interactive Q&A session in the terminal."""
+    def interactive(self, *, agentic: bool = False) -> None:
+        """
+        Run interactive Q&A session in the terminal.
+
+        Args:
+            agentic: Enable Agentic RAG mode (multi-agent pipeline)
+        """
         lm = self.config["rag"]["lm_name"].replace("ollama_chat/", "")
+        mode = "🤖 AGENTIC" if agentic else "Standard"
         print(f"\n{'=' * 60}")
-        print(f"  GraphRAG Interactive Q&A")
+        print(f"  GraphRAG Interactive Q&A ({mode} Mode)")
         print(f"  LLM: {lm}")
         print(f"  Embeddings: {self.config['embed']['model']}")
         print(f"  Chunks loaded: {len(self._chunks)}")
+        if agentic:
+            print(f"  Agents: Planning, Grader, Reasoning, Validation, Reflection")
         print(f"{'=' * 60}")
         print("  Type 'quit' to exit.\n")
 
@@ -782,7 +887,26 @@ class AgenticPipeline:
             if question.lower() in ("quit", "exit", "q"):
                 break
 
-            result = self.query(question)
-            print(f"\nA: {result['answer']}")
-            print(f"   [{result['elapsed_sec']}s | {result['num_chunks']} chunks | "
-                  f"sources: {', '.join(pathlib.Path(s).name for s in result['sources'])}]\n")
+            result = self.query(question, agentic=agentic)
+
+            if agentic:
+                # Agentic mode output
+                print(f"\nA: {result['answer']}")
+                if result.get("validation"):
+                    val = result["validation"]
+                    status = "✓" if val.get("valid") else "✗"
+                    conf = val.get("confidence", 0.0)
+                    print(f"   Validation: {status} (confidence: {conf:.2f})")
+                print(f"   Reasoning: {len(result.get('reasoning_chain', []))} steps")
+                print(f"   Citations: {len(result.get('citations', []))}")
+                print(f"   Retries: {result.get('retry_count', 0)}")
+                if result.get('metadata'):
+                    meta = result['metadata']
+                    print(f"   Retrieved: {meta.get('num_retrieved', 0)} docs, "
+                          f"Relevant: {meta.get('num_relevant', 0)} docs")
+                print()
+            else:
+                # Standard mode output
+                print(f"\nA: {result['answer']}")
+                print(f"   [{result['elapsed_sec']}s | {result['num_chunks']} chunks | "
+                      f"sources: {', '.join(pathlib.Path(s).name for s in result['sources'])}]\n")
