@@ -5,7 +5,7 @@ Base agent class for Agentic GraphRAG.
 from abc import ABC, abstractmethod
 from typing import Any, Optional
 
-from ..embeddings import OllamaEmbedder
+from ..embeddings import OllamaLLM
 from .state import AgenticRAGState
 
 
@@ -18,7 +18,7 @@ class BaseAgent(ABC):
 
     def __init__(
         self,
-        llm: OllamaEmbedder,
+        llm: OllamaLLM,
         config: dict[str, Any],
         verbose: bool = False,
     ) -> None:

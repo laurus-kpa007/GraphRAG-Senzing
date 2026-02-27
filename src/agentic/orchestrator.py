@@ -6,7 +6,7 @@ Coordinates all agents in the Agentic GraphRAG pipeline.
 
 from typing import Any, Callable, Optional
 
-from ..embeddings import OllamaEmbedder
+from ..embeddings import OllamaLLM
 from .agents import (
     GraderAgent,
     PlanningAgent,
@@ -35,7 +35,7 @@ class AgenticOrchestrator:
 
     def __init__(
         self,
-        llm: OllamaEmbedder,
+        llm: OllamaLLM,
         retriever: Callable[[str, str], list[dict]],  # (query, strategy) -> docs
         config: dict[str, Any],
         verbose: bool = False,
