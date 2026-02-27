@@ -9,6 +9,7 @@ import logging
 import pathlib
 import time
 import tomllib
+from typing import Optional
 
 import lancedb
 import numpy as np
@@ -18,6 +19,14 @@ from .loaders import DocumentLoader
 from .embeddings import OllamaEmbedding, OllamaLLM
 
 logger = logging.getLogger(__name__)
+
+# Optional profiling support
+try:
+    from pyinstrument import Profiler
+    PROFILING_AVAILABLE = True
+except ImportError:
+    PROFILING_AVAILABLE = False
+    Profiler = None
 
 
 class AgenticPipeline:
@@ -64,6 +73,10 @@ class AgenticPipeline:
         self._chunks: list[dict] = []
         self._entities: list[dict] = []
         self._is_initialized = False
+
+        # Profiling
+        self._profiler: Optional[Profiler] = None
+        self._use_profiling = self.config.get("prof", {}).get("use_pyinst", False)
 
     # ── Prerequisites ────────────────────────────────────────────────
 
@@ -354,25 +367,95 @@ class AgenticPipeline:
 
     # ── Phase 5: RAG Query ───────────────────────────────────────────
 
+    def _keyword_search(self, question: str, top_k: int = 5) -> list[dict]:
+        """Keyword-based search in chunks (fallback for exact term matching)."""
+        results = []
+
+        # Extract key terms from question (remove common words)
+        stopwords = {"은", "는", "이", "가", "을", "를", "의", "에", "와", "과", "도", "로",
+                     "은요", "는요", "뭐야", "뭔가요", "무엇", "어디", "언제", "누구", "왜"}
+
+        # Split and clean question
+        terms = [t.strip() for t in question.split() if len(t.strip()) > 1]
+        key_terms = [t for t in terms if t not in stopwords]
+
+        if not key_terms:
+            return []
+
+        # Search in stored chunks
+        for chunk in self._chunks:
+            text = chunk.get("text", "").lower()
+            score = sum(1 for term in key_terms if term.lower() in text)
+
+            if score > 0:
+                results.append({
+                    **chunk,
+                    "keyword_score": score,
+                })
+
+        # Sort by keyword match score
+        results.sort(key=lambda x: x.get("keyword_score", 0), reverse=True)
+        return results[:top_k]
+
     def query(self, question: str, *, top_k: int = 0) -> dict:
         """
-        GraphRAG query:
-        1. Vector search for relevant chunks (BGE-M3)
-        2. Entity context augmentation
-        3. LLM answer generation (gemma3:27b)
+        Hybrid GraphRAG query:
+        1. Vector search for semantic similarity (BGE-M3)
+        2. Keyword search for exact term matching
+        3. Entity context augmentation
+        4. LLM answer generation (gemma3:27b)
         """
         if top_k <= 0:
             top_k = self.config["rag"].get("max_chunks", 9)
 
-        # Vector search
+        # 1. Vector search
         table = self._get_or_create_table()
         q_vec = self.embedder.embed_text(question)
 
         try:
-            results = table.search(q_vec).limit(top_k).to_list()
+            vector_results = table.search(q_vec).limit(top_k).to_list()
         except Exception as e:
             logger.warning("Vector search failed: %s", e)
-            results = []
+            vector_results = []
+
+        # 2. Keyword search (for exact term matching)
+        keyword_results = self._keyword_search(question, top_k=max(3, top_k // 2))
+
+        # 3. Merge vector + keyword results (deduplicate by uid)
+        seen_uids = set()
+        initial_results = []
+
+        # Prioritize vector results
+        for r in vector_results:
+            uid = r.get("uid")
+            if uid not in seen_uids:
+                initial_results.append(r)
+                seen_uids.add(uid)
+
+        # Add keyword results not in vector results
+        for r in keyword_results:
+            uid = r.get("uid")
+            if uid not in seen_uids:
+                initial_results.append(r)
+                seen_uids.add(uid)
+
+        # 4. Graph expansion (find related chunks through entity co-occurrence)
+        graph_results = []
+        if len(initial_results) > 0 and len(self._entities) > 0:
+            graph_results = self._graph_search(question, initial_results[:5])
+
+            # Add graph results
+            for r in graph_results:
+                uid = r.get("uid")
+                if uid not in seen_uids:
+                    initial_results.append(r)
+                    seen_uids.add(uid)
+
+        # Limit to top_k
+        results = initial_results[:top_k]
+
+        logger.info("GraphRAG search: %d vector + %d keyword + %d graph = %d total",
+                   len(vector_results), len(keyword_results), len(graph_results), len(results))
 
         # Build context
         context_parts = []
@@ -382,8 +465,8 @@ class AgenticPipeline:
             sources.add(r.get("source", "unknown"))
         context_text = "\n\n---\n\n".join(context_parts)
 
-        # Augment with entity info
-        entity_context = self._get_entity_context(question)
+        # Augment with entity info (including co-occurring entities from chunks)
+        entity_context = self._get_entity_context(question, chunks=results)
         if entity_context:
             context_text = f"{context_text}\n\n[Related Entities]\n{entity_context}"
 
@@ -392,15 +475,23 @@ class AgenticPipeline:
 
         if lang == "ko":
             system_prompt = (
-                "당신은 지식이 풍부한 도우미입니다. 제공된 컨텍스트를 기반으로 질문에 답변하세요. "
-                "컨텍스트에 충분한 정보가 없으면 그렇다고 명확히 말하세요. "
-                "상세하고 정확하게 한국어로 답변하세요."
+                "당신은 지식이 풍부한 도우미입니다. 제공된 컨텍스트를 기반으로 질문에 답변하세요.\n\n"
+                "중요한 규칙:\n"
+                "1. 테이블 정보가 있을 때, 질문과 정확히 일치하는 행(row)만 사용하세요.\n"
+                "2. 예를 들어 '형제자매' 또는 '누나'에 대한 질문이면, '본인'이나 '부모'의 정보는 답변에 포함하지 마세요.\n"
+                "3. 각 테이블 행은 독립적인 경우이므로, 관련 없는 행의 값을 나열하지 마세요.\n"
+                "4. 컨텍스트에 충분한 정보가 없으면 그렇다고 명확히 말하세요.\n"
+                "5. 상세하고 정확하게 한국어로 답변하세요."
             )
         else:
             system_prompt = (
-                "You are a knowledgeable assistant. Answer the question based on the provided context. "
-                "If the context does not contain enough information, say so. "
-                "Be detailed and accurate. Respond in the same language as the question."
+                "You are a knowledgeable assistant. Answer the question based on the provided context.\n\n"
+                "Important rules:\n"
+                "1. When table data is provided, only use the row(s) that exactly match the question.\n"
+                "2. For example, if asked about 'sibling' or 'sister', do NOT include information from 'self' or 'parent' rows.\n"
+                "3. Each table row represents an independent case - do not list values from unrelated rows.\n"
+                "4. If the context does not contain enough information, say so.\n"
+                "5. Be detailed and accurate. Respond in the same language as the question."
             )
 
         user_prompt = f"Context:\n{context_text}\n\nQuestion: {question}\n\nAnswer:"
@@ -418,8 +509,63 @@ class AgenticPipeline:
             "chunks": [r.get("text", "")[:200] for r in results],
         }
 
-    def _get_entity_context(self, question: str) -> str:
-        """Load entity info relevant to the question."""
+    def _graph_search(self, question: str, initial_chunks: list[dict]) -> list[dict]:
+        """
+        Graph-based expansion: find related chunks through entity co-occurrence.
+
+        GraphRAG approach:
+        1. Extract entities from initial chunks
+        2. Find other chunks containing same/related entities
+        3. Expand context with entity relationships
+        """
+        if not initial_chunks:
+            return []
+
+        # Extract entities mentioned in initial chunks
+        chunk_entities = set()
+        for chunk in initial_chunks:
+            text = chunk.get("text", "").lower()
+            # Find entities mentioned in this chunk
+            for ent in self._entities:
+                ent_text = ent.get("text", "").lower()
+                if ent_text and len(ent_text) > 2 and ent_text in text:
+                    chunk_entities.add(ent_text)
+
+        if not chunk_entities:
+            return []
+
+        logger.info("Graph expansion: found %d entities in initial chunks", len(chunk_entities))
+
+        # Find additional chunks containing these entities
+        expanded_chunks = []
+        initial_uids = {c.get("uid") for c in initial_chunks}
+
+        for chunk in self._chunks:
+            uid = chunk.get("uid")
+            if uid in initial_uids:
+                continue  # Skip already included chunks
+
+            text = chunk.get("text", "").lower()
+            # Count entity co-occurrence
+            overlap = sum(1 for ent in chunk_entities if ent in text)
+
+            if overlap >= 2:  # Require at least 2 shared entities
+                expanded_chunks.append({
+                    **chunk,
+                    "graph_score": overlap,
+                })
+
+        # Sort by entity overlap
+        expanded_chunks.sort(key=lambda x: x.get("graph_score", 0), reverse=True)
+
+        logger.info("Graph expansion: found %d related chunks", len(expanded_chunks[:5]))
+        return expanded_chunks[:5]  # Top 5 graph-related chunks
+
+    def _get_entity_context(self, question: str, chunks: list[dict] = None) -> str:
+        """
+        Load entity info relevant to the question.
+        If chunks provided, also extract entity relationships.
+        """
         store_path = pathlib.Path(self.config["ent"]["store_path"])
         if not store_path.exists():
             return ""
@@ -438,12 +584,41 @@ class AgenticPipeline:
             return ""
 
         q_lower = question.lower()
-        matched = [
-            e for e in entities
-            if e.get("lemma_key", "") in q_lower
-            or any(w in q_lower for w in e.get("lemma_key", "").split("_") if len(w) > 3)
-        ]
-        matched.sort(key=lambda x: x.get("count", 0), reverse=True)
+
+        # More flexible entity matching
+        matched = []
+        for e in entities:
+            entity_text = e.get("text", "").lower()
+            lemma_key = e.get("lemma_key", "").lower()
+
+            # Exact match
+            if entity_text in q_lower or lemma_key in q_lower:
+                matched.append(e)
+                continue
+
+            # Partial match (for compound words like "백신휴가")
+            if len(entity_text) > 2:
+                if entity_text in q_lower or q_lower in entity_text:
+                    matched.append(e)
+                    continue
+
+            # Word-level match
+            words = lemma_key.split("_")
+            if any(w in q_lower for w in words if len(w) > 2):
+                matched.append(e)
+
+        # If chunks provided, also add co-occurring entities
+        if chunks:
+            chunk_text = " ".join(c.get("text", "") for c in chunks).lower()
+            for e in entities:
+                ent_text = e.get("text", "").lower()
+                if ent_text and len(ent_text) > 2 and ent_text in chunk_text:
+                    if e not in matched:
+                        matched.append(e)
+
+        # Remove duplicates and sort by count
+        matched = {e["uid"]: e for e in matched}.values()
+        matched = sorted(matched, key=lambda x: x.get("count", 0), reverse=True)
 
         parts = []
         for e in matched[:15]:
@@ -494,6 +669,31 @@ class AgenticPipeline:
 
     # ── Full Agentic Run ─────────────────────────────────────────────
 
+    def _start_profiling(self) -> None:
+        """Start performance profiling if enabled."""
+        if self._use_profiling and PROFILING_AVAILABLE:
+            self._profiler = Profiler()
+            self._profiler.start()
+            logger.info("Performance profiling enabled")
+        elif self._use_profiling and not PROFILING_AVAILABLE:
+            logger.warning("Profiling requested but pyinstrument not installed. Run: pip install pyinstrument")
+
+    def _stop_profiling(self) -> None:
+        """Stop profiling and save report."""
+        if self._profiler is not None:
+            self._profiler.stop()
+            output_dir = pathlib.Path("data/output")
+            output_dir.mkdir(parents=True, exist_ok=True)
+
+            # Save HTML report
+            html_path = output_dir / "profile_report.html"
+            with open(html_path, "w", encoding="utf-8") as f:
+                f.write(self._profiler.output_html())
+            logger.info("Profiling report saved: %s", html_path)
+
+            # Print text summary
+            logger.info("Performance Profile:\n%s", self._profiler.output_text(unicode=True, color=False))
+
     def run(
         self,
         input_paths: list[str | pathlib.Path],
@@ -504,51 +704,58 @@ class AgenticPipeline:
         Run the full agentic pipeline end-to-end.
         Returns a summary of what was processed.
         """
-        logger.info("=" * 60)
-        logger.info("  Agentic GraphRAG Pipeline Starting")
-        logger.info("  LLM: %s", self.config["rag"]["lm_name"])
-        logger.info("  Embeddings: %s", self.config["embed"]["model"])
-        logger.info("=" * 60)
+        # Start profiling if enabled
+        self._start_profiling()
 
-        # Check prerequisites
-        status = self.check_prerequisites()
-        logger.info("Prerequisites: %s", status)
+        try:
+            logger.info("=" * 60)
+            logger.info("  Agentic GraphRAG Pipeline Starting")
+            logger.info("  LLM: %s", self.config["rag"]["lm_name"])
+            logger.info("  Embeddings: %s", self.config["embed"]["model"])
+            logger.info("=" * 60)
 
-        if not status["embed_model"]:
-            raise RuntimeError(
-                f"Embedding model not available: {self.config['embed']['model']}. "
-                f"Run: ollama pull {self.config['embed']['model']}"
-            )
+            # Check prerequisites
+            status = self.check_prerequisites()
+            logger.info("Prerequisites: %s", status)
 
-        if not status["llm_model"]:
-            lm = self.config["rag"]["lm_name"].replace("ollama_chat/", "")
-            logger.warning("LLM not available: %s. Run: ollama pull %s", lm, lm)
+            if not status["embed_model"]:
+                raise RuntimeError(
+                    f"Embedding model not available: {self.config['embed']['model']}. "
+                    f"Run: ollama pull {self.config['embed']['model']}"
+                )
 
-        # Initialize
-        self.initialize()
+            if not status["llm_model"]:
+                lm = self.config["rag"]["lm_name"].replace("ollama_chat/", "")
+                logger.warning("LLM not available: %s. Run: ollama pull %s", lm, lm)
 
-        # Load documents
-        documents = self.load_documents(input_paths)
-        if not documents:
-            raise ValueError("No documents loaded. Check input paths.")
+            # Initialize
+            self.initialize()
 
-        # Embed & Store
-        num_chunks = self.embed_and_store(documents)
+            # Load documents
+            documents = self.load_documents(input_paths)
+            if not documents:
+                raise ValueError("No documents loaded. Check input paths.")
 
-        # NLP extraction
-        if not skip_nlp:
-            self.run_nlp_pipeline(documents)
+            # Embed & Store
+            num_chunks = self.embed_and_store(documents)
 
-        logger.info("=" * 60)
-        logger.info("  Pipeline Ready - %d chunks from %d documents", num_chunks, len(documents))
-        logger.info("=" * 60)
+            # NLP extraction
+            if not skip_nlp:
+                self.run_nlp_pipeline(documents)
 
-        return {
-            "documents_loaded": len(documents),
-            "total_paragraphs": sum(len(v) for v in documents.values()),
-            "chunks_stored": num_chunks,
-            "sources": list(documents.keys()),
-        }
+            logger.info("=" * 60)
+            logger.info("  Pipeline Ready - %d chunks from %d documents", num_chunks, len(documents))
+            logger.info("=" * 60)
+
+            return {
+                "documents_loaded": len(documents),
+                "total_paragraphs": sum(len(v) for v in documents.values()),
+                "chunks_stored": num_chunks,
+                "sources": list(documents.keys()),
+            }
+        finally:
+            # Stop profiling and save report
+            self._stop_profiling()
 
     # ── Interactive Session ──────────────────────────────────────────
 

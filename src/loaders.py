@@ -77,23 +77,124 @@ class DocumentLoader:
 
     def _load_docx(self, path: pathlib.Path) -> list[str]:
         from docx import Document
+        from docx.oxml.text.paragraph import CT_P
+        from docx.oxml.table import CT_Tbl
+        from docx.table import _Cell, Table
+        from docx.text.paragraph import Paragraph
 
         doc = Document(str(path))
         paragraphs: list[str] = []
 
-        for para in doc.paragraphs:
-            text = para.text.strip()
-            if text:
-                paragraphs.append(text)
+        # Process document elements in order (paragraphs, tables, images)
+        for element in doc.element.body:
+            # Paragraph
+            if isinstance(element, CT_P):
+                para = Paragraph(element, doc)
+                text = para.text.strip()
 
-        for table in doc.tables:
-            for row in table.rows:
-                cells = [cell.text.strip() for cell in row.cells]
-                row_text = " | ".join(cells)
-                if row_text.strip("| "):
-                    paragraphs.append(row_text)
+                # Check for images in paragraph
+                if para.runs:
+                    for run in para.runs:
+                        # Extract image descriptions
+                        if run.element.xpath('.//pic:cNvPr'):
+                            for img in run.element.xpath('.//pic:cNvPr'):
+                                img_name = img.get('name', '')
+                                img_desc = img.get('descr', '')
+                                if img_name or img_desc:
+                                    image_text = f"[Image: {img_name or 'untitled'}]"
+                                    if img_desc:
+                                        image_text += f" {img_desc}"
+                                    paragraphs.append(image_text)
+
+                if text:
+                    paragraphs.append(text)
+
+            # Table
+            elif isinstance(element, CT_Tbl):
+                table = Table(element, doc)
+                table_text = self._extract_table_text(table)
+                if table_text:
+                    # Add spacing before/after table for better chunking
+                    paragraphs.append("")  # Blank line before table
+                    paragraphs.extend(table_text)
+                    paragraphs.append("")  # Blank line after table
 
         return paragraphs
+
+    def _extract_table_text(self, table) -> list[str]:
+        """
+        Extract table text preserving semantic structure.
+
+        Creates both:
+        1. Natural language description
+        2. Structured row format
+
+        Based on best practices from Unstructured.io and Docling.
+        """
+        if not table.rows or len(table.rows) == 0:
+            return []
+
+        rows_data = []
+        for row in table.rows:
+            cells = [cell.text.strip() for cell in row.cells]
+            if any(cells):  # Skip empty rows
+                rows_data.append(cells)
+
+        if not rows_data:
+            return []
+
+        # Detect header row
+        has_header = False
+        header_row = None
+
+        if len(rows_data) > 1:
+            first_row = rows_data[0]
+            # Heuristic: header if all cells are short and non-empty
+            if all(c and len(c) < 50 for c in first_row):
+                has_header = True
+                header_row = first_row
+
+        results = []
+
+        # Format 1: Table summary with header context
+        if has_header and len(rows_data) > 1:
+            # Create natural language table description
+            num_cols = len(header_row)
+            num_rows = len(rows_data) - 1
+
+            # Table introduction
+            intro = f"[Table: {num_rows} rows with columns: {', '.join(header_row)}]"
+            results.append(intro)
+
+            # Format each data row as key-value pairs for better semantic understanding
+            for row_idx, data_row in enumerate(rows_data[1:], 1):
+                # Ensure data_row has same length as header
+                padded_row = data_row + [''] * (num_cols - len(data_row))
+
+                # Create contextual row description with clear separation
+                row_parts = []
+                for header, value in zip(header_row, padded_row[:num_cols]):
+                    if value:  # Only include non-empty values
+                        row_parts.append(f"{header}: {value}")
+
+                if row_parts:
+                    # Add row separator for clarity
+                    row_text = " | ".join(row_parts)
+                    # Prefix with "케이스:" or "Case:" to make each row distinct
+                    results.append(f"[Row {row_idx}] {row_text}")
+                    # Add blank line between rows for better chunking
+                    if row_idx < len(rows_data) - 1:
+                        results.append("")
+
+        else:
+            # No clear header - format as plain rows with context
+            results.append(f"[Table: {len(rows_data)} rows]")
+            for idx, row in enumerate(rows_data, 1):
+                row_text = " | ".join(row)
+                if row_text.strip("| "):
+                    results.append(f"Row {idx}: {row_text}")
+
+        return results
 
     def _load_text(self, path: pathlib.Path) -> list[str]:
         raw = path.read_bytes()

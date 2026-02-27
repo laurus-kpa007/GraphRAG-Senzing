@@ -1,0 +1,36 @@
+# Core Dependencies
+python-docx>=0.8.11
+chardet>=5.0.0
+markdown-it-py>=3.0.0
+httpx>=0.24.0
+pydantic>=2.0.0
+certifi>=2023.0.0
+beautifulsoup4>=4.12.0
+requests>=2.31.0
+requests-cache>=1.0.0
+
+# Vector Database & Data Processing
+lancedb>=0.3.0
+pyarrow>=12.0.0
+numpy>=1.24.0
+polars>=0.19.0
+
+# NLP & Text Processing
+spacy>=3.7.0
+gensim>=4.3.0
+
+# Graph & Network
+networkx>=3.1
+rdflib>=6.3.0
+pyvis>=0.3.2
+
+# Web UI
+streamlit>=1.28.0
+
+# Performance Profiling (Optional)
+pyinstrument>=4.6.0
+
+# spaCy Language Models
+# Install after requirements:
+# python -m spacy download en_core_web_md
+# python -m pip install https://github.com/explosion/spacy-models/releases/download/ko_core_news_lg-3.8.0/ko_core_news_lg-3.8.0-py3-none-any.whl

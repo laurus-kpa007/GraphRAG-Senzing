@@ -16,7 +16,8 @@ domain_bundle = "domain.json"
 
 [nlp]
 parser_class = "Parser"
-spacy_model = "en_core_web_md"
+# spacy_model = "en_core_web_md"
+spacy_model = "ko_core_news_lg"
 # 한국어 사용 시: spacy_model = "ko_core_news_lg"
 # 설치: python -m spacy download ko_core_news_lg
 lex_path = "data/output/lex.json"
@@ -48,8 +49,8 @@ html_height = "900px"
 html_width = "100%"
 
 [rag]
-lm_name = "ollama_chat/gemma3:27b"
-api_base = "http://localhost:11434"
+lm_name = "ollama_chat/gemma3:4b"
+api_base = "http://192.168.68.68:11434"
 temperature = 0.0
 max_tokens = 3000
 max_chunks = 11
@@ -63,10 +64,10 @@ w2v_min_dist = 0.33
 base_url = "http://localhost:5173/api"
 
 [prof]
-use_pyinst = false
+use_pyinst = true  # Enable pyinstrument profiling (saves to data/output/profile_report.html)
 
 ## 커스텀 확장 설정 (strwythura 외부)
 [embed]
-model = "bona/bge-m3:latest"
+model = "bge-m3:latest"
 dim = 1024
-ollama_url = "http://localhost:11434"
+ollama_url = "http://192.168.68.68:11434"

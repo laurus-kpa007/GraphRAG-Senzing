@@ -132,32 +132,58 @@ class OllamaLLM:
         if system:
             payload["system"] = system
 
-        resp = self._client.post(
-            f"{self.base_url}/api/generate",
-            json=payload,
-        )
-        resp.raise_for_status()
-        return resp.json().get("response", "")
+        try:
+            resp = self._client.post(
+                f"{self.base_url}/api/generate",
+                json=payload,
+                timeout=120.0,  # 2 minutes timeout
+            )
+            resp.raise_for_status()
+            return resp.json().get("response", "")
+        except Exception as e:
+            error_msg = f"LLM generation failed: {e}"
+            if hasattr(e, 'response') and e.response is not None:
+                try:
+                    error_detail = e.response.json()
+                    error_msg += f"\nOllama error: {error_detail}"
+                except:
+                    error_msg += f"\nResponse: {e.response.text[:500]}"
+            logger = logging.getLogger(__name__)
+            logger.error(error_msg)
+            raise RuntimeError(error_msg) from e
 
     def chat(
         self,
         messages: list[dict[str, str]],
     ) -> str:
         """Chat-style generation."""
-        resp = self._client.post(
-            f"{self.base_url}/api/chat",
-            json={
-                "model": self.model,
-                "messages": messages,
-                "stream": False,
-                "options": {
-                    "temperature": self.temperature,
-                    "num_predict": self.max_tokens,
+        try:
+            resp = self._client.post(
+                f"{self.base_url}/api/chat",
+                json={
+                    "model": self.model,
+                    "messages": messages,
+                    "stream": False,
+                    "options": {
+                        "temperature": self.temperature,
+                        "num_predict": self.max_tokens,
+                    },
                 },
-            },
-        )
-        resp.raise_for_status()
-        return resp.json().get("message", {}).get("content", "")
+                timeout=120.0,  # 2 minutes timeout
+            )
+            resp.raise_for_status()
+            return resp.json().get("message", {}).get("content", "")
+        except Exception as e:
+            error_msg = f"LLM chat failed: {e}"
+            if hasattr(e, 'response') and e.response is not None:
+                try:
+                    error_detail = e.response.json()
+                    error_msg += f"\nOllama error: {error_detail}"
+                except:
+                    error_msg += f"\nResponse: {e.response.text[:500]}"
+            logger = logging.getLogger(__name__)
+            logger.error(error_msg)
+            raise RuntimeError(error_msg) from e
 
     def is_available(self) -> bool:
         """Check if the Ollama server and model are reachable."""
