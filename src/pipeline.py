@@ -9,7 +9,7 @@ import logging
 import pathlib
 import time
 import tomllib
-from typing import Optional
+from typing import Any, Optional
 
 import lancedb
 import numpy as np
