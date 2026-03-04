@@ -477,24 +477,54 @@ class AgenticPipeline:
             system_prompt = (
                 "당신은 지식이 풍부한 도우미입니다. 제공된 컨텍스트를 기반으로 질문에 답변하세요.\n\n"
                 "중요한 규칙:\n"
-                "1. 테이블 정보가 있을 때, 질문과 정확히 일치하는 행(row)만 사용하세요.\n"
-                "2. 예를 들어 '형제자매' 또는 '누나'에 대한 질문이면, '본인'이나 '부모'의 정보는 답변에 포함하지 마세요.\n"
-                "3. 각 테이블 행은 독립적인 경우이므로, 관련 없는 행의 값을 나열하지 마세요.\n"
-                "4. 컨텍스트에 충분한 정보가 없으면 그렇다고 명확히 말하세요.\n"
-                "5. 상세하고 정확하게 한국어로 답변하세요."
+                "1. 컨텍스트에 Q&A 사례가 포함된 경우, 그 사례의 답변을 그대로 복사하지 마세요.\n"
+                "   - 먼저 사례에서 적용되는 '규칙/원칙'을 추출하세요.\n"
+                "   - 그 다음 질문의 구체적인 조건(금액, 날짜, 자격 등)을 규칙에 대입하세요.\n"
+                "   - 사례와 질문의 조건이 다르면, 다른 조건에 맞는 결론을 도출하세요.\n"
+                "   예시: 컨텍스트 사례가 '4억5000만원 계약 → 공제 불가'라고 하더라도,\n"
+                "   질문의 조건이 '3억5000만원 계약'이면 규칙(계약 체결일 기준 4억 이하)에\n"
+                "   따라 '공제 가능'이라고 답변해야 합니다.\n"
+                "2. 테이블 정보가 있을 때, 질문과 정확히 일치하는 행(row)만 사용하세요.\n"
+                "3. 예를 들어 '형제자매' 또는 '누나'에 대한 질문이면, '본인'이나 '부모'의 정보는 답변에 포함하지 마세요.\n"
+                "4. 각 테이블 행은 독립적인 경우이므로, 관련 없는 행의 값을 나열하지 마세요.\n"
+                "5. 컨텍스트에 충분한 정보가 없으면 그렇다고 명확히 말하세요.\n"
+                "6. 상세하고 정확하게 한국어로 답변하세요."
             )
         else:
             system_prompt = (
                 "You are a knowledgeable assistant. Answer the question based on the provided context.\n\n"
                 "Important rules:\n"
-                "1. When table data is provided, only use the row(s) that exactly match the question.\n"
-                "2. For example, if asked about 'sibling' or 'sister', do NOT include information from 'self' or 'parent' rows.\n"
-                "3. Each table row represents an independent case - do not list values from unrelated rows.\n"
-                "4. If the context does not contain enough information, say so.\n"
-                "5. Be detailed and accurate. Respond in the same language as the question."
+                "1. If the context contains Q&A examples, do NOT copy their answers verbatim.\n"
+                "   - First, extract the underlying 'rule/principle' from the example.\n"
+                "   - Then, apply that rule to the specific conditions in the question (amounts, dates, eligibility, etc.).\n"
+                "   - If the question's conditions differ from the example's, derive the correct conclusion for the new conditions.\n"
+                "2. When table data is provided, only use the row(s) that exactly match the question.\n"
+                "3. For example, if asked about 'sibling' or 'sister', do NOT include information from 'self' or 'parent' rows.\n"
+                "4. Each table row represents an independent case - do not list values from unrelated rows.\n"
+                "5. If the context does not contain enough information, say so.\n"
+                "6. Be detailed and accurate. Respond in the same language as the question."
             )
 
-        user_prompt = f"Context:\n{context_text}\n\nQuestion: {question}\n\nAnswer:"
+        if lang == "ko":
+            user_prompt = (
+                f"컨텍스트:\n{context_text}\n\n"
+                f"질문: {question}\n\n"
+                "아래 단계를 따라 답변하세요:\n"
+                "1단계) 컨텍스트에서 이 질문에 적용되는 규칙/원칙을 찾으세요.\n"
+                "2단계) 질문의 구체적 조건(숫자, 날짜, 자격 등)을 확인하세요.\n"
+                "3단계) 규칙을 질문의 조건에 적용하여 결론을 도출하세요.\n\n"
+                "답변:"
+            )
+        else:
+            user_prompt = (
+                f"Context:\n{context_text}\n\n"
+                f"Question: {question}\n\n"
+                "Follow these steps to answer:\n"
+                "Step 1) Identify the rule/principle from the context that applies to this question.\n"
+                "Step 2) Note the specific conditions in the question (numbers, dates, eligibility, etc.).\n"
+                "Step 3) Apply the rule to the question's conditions and derive the conclusion.\n\n"
+                "Answer:"
+            )
 
         t0 = time.time()
         answer = self.llm.generate(user_prompt, system=system_prompt)
