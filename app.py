@@ -197,20 +197,28 @@ with tab2:
                 st.markdown(question)
 
             with st.chat_message("assistant"):
-                with st.spinner("답변 생성 중..."):
-                    result = st.session_state.pipeline.query(question)
+                result = st.session_state.pipeline.query(question)
 
-                st.markdown(result["answer"])
+                if "answer_stream" in result:
+                    # Streaming mode: write tokens as they arrive
+                    answer = st.write_stream(result["answer_stream"])
+                    elapsed = round(time.time() - result["start_time"], 2)
+                else:
+                    # Non-streaming mode
+                    answer = result["answer"]
+                    elapsed = result["elapsed_sec"]
+                    st.markdown(answer)
+
                 st.caption(
-                    f"⏱ {result['elapsed_sec']}s | "
+                    f"⏱ {elapsed}s | "
                     f"📄 {result['num_chunks']} chunks | "
                     f"📁 {', '.join(pathlib.Path(s).name for s in result['sources'])}"
                 )
 
                 st.session_state.messages.append({
                     "role": "assistant",
-                    "content": result["answer"],
-                    "metadata": result,
+                    "content": answer,
+                    "metadata": {**result, "answer": answer, "elapsed_sec": elapsed},
                 })
 
             # Show retrieved chunks in expander

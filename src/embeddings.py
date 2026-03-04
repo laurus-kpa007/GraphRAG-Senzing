@@ -4,6 +4,7 @@ Provides OllamaEmbedding class compatible with LanceDB's embedding interface
 and utility functions for direct embedding calls.
 """
 
+import json
 import logging
 from typing import Optional
 
@@ -119,7 +120,7 @@ class OllamaLLM:
         self._client = httpx.Client(timeout=timeout)
 
     def generate(self, prompt: str, *, system: Optional[str] = None) -> str:
-        """Generate a response from the LLM."""
+        """Generate a response from the LLM (non-streaming)."""
         payload = {
             "model": self.model,
             "prompt": prompt,
@@ -148,6 +149,46 @@ class OllamaLLM:
                     error_msg += f"\nOllama error: {error_detail}"
                 except:
                     error_msg += f"\nResponse: {e.response.text[:500]}"
+            logger = logging.getLogger(__name__)
+            logger.error(error_msg)
+            raise RuntimeError(error_msg) from e
+
+    def generate_stream(self, prompt: str, *, system: Optional[str] = None):
+        """Generate a response from the LLM with token-by-token streaming.
+
+        Yields:
+            str: Each token/chunk as it is generated.
+        """
+        payload = {
+            "model": self.model,
+            "prompt": prompt,
+            "stream": True,
+            "options": {
+                "temperature": self.temperature,
+                "num_predict": self.max_tokens,
+            },
+        }
+        if system:
+            payload["system"] = system
+
+        try:
+            with self._client.stream(
+                "POST",
+                f"{self.base_url}/api/generate",
+                json=payload,
+                timeout=120.0,
+            ) as resp:
+                resp.raise_for_status()
+                for line in resp.iter_lines():
+                    if line:
+                        data = json.loads(line)
+                        token = data.get("response", "")
+                        if token:
+                            yield token
+                        if data.get("done", False):
+                            break
+        except Exception as e:
+            error_msg = f"LLM streaming failed: {e}"
             logger = logging.getLogger(__name__)
             logger.error(error_msg)
             raise RuntimeError(error_msg) from e

@@ -523,6 +523,19 @@ class AgenticPipeline:
             )
 
         t0 = time.time()
+        stream_enabled = self.config["rag"].get("stream", False)
+
+        if stream_enabled:
+            # Return metadata + generator for streaming callers
+            return {
+                "question": question,
+                "answer_stream": self.llm.generate_stream(user_prompt, system=system_prompt),
+                "sources": list(sources),
+                "num_chunks": len(results),
+                "start_time": t0,
+                "chunks": [r.get("text", "")[:200] for r in results],
+            }
+
         answer = self.llm.generate(user_prompt, system=system_prompt)
         elapsed = time.time() - t0
 
