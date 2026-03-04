@@ -509,20 +509,16 @@ class AgenticPipeline:
             user_prompt = (
                 f"컨텍스트:\n{context_text}\n\n"
                 f"질문: {question}\n\n"
-                "아래 단계를 따라 답변하세요:\n"
-                "1단계) 컨텍스트에서 이 질문에 적용되는 규칙/원칙을 찾으세요.\n"
-                "2단계) 질문의 구체적 조건(숫자, 날짜, 자격 등)을 확인하세요.\n"
-                "3단계) 규칙을 질문의 조건에 적용하여 결론을 도출하세요.\n\n"
+                "컨텍스트에서 관련 규칙을 찾고, 질문의 조건에 적용하여 결론을 도출하세요.\n"
+                "중간 추론 과정은 생략하고 최종 답변만 간결하게 작성하세요.\n\n"
                 "답변:"
             )
         else:
             user_prompt = (
                 f"Context:\n{context_text}\n\n"
                 f"Question: {question}\n\n"
-                "Follow these steps to answer:\n"
-                "Step 1) Identify the rule/principle from the context that applies to this question.\n"
-                "Step 2) Note the specific conditions in the question (numbers, dates, eligibility, etc.).\n"
-                "Step 3) Apply the rule to the question's conditions and derive the conclusion.\n\n"
+                "Find the relevant rule from the context, apply it to the question's conditions, and derive the conclusion.\n"
+                "Skip the intermediate reasoning steps and provide only the final answer concisely.\n\n"
                 "Answer:"
             )
 
