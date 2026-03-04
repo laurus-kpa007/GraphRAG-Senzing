@@ -21,6 +21,7 @@ gensim>=4.3.0
 
 # Graph & Network
 networkx>=3.1
+scipy>=1.10.0
 rdflib>=6.3.0
 pyvis>=0.3.2
 

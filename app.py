@@ -67,6 +67,9 @@ with st.sidebar:
         st.metric("문서 수", s["documents_loaded"])
         st.metric("청크 수", s["chunks_stored"])
         st.metric("단락 수", s["total_paragraphs"])
+        if s.get("graph_nodes"):
+            st.metric("그래프 노드", s["graph_nodes"])
+            st.metric("그래프 엣지", s["graph_edges"])
     else:
         st.info("파이프라인이 실행되지 않았습니다. 문서를 업로드하세요.")
 

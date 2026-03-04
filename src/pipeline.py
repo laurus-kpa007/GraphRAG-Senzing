@@ -13,6 +13,7 @@ from datetime import datetime
 from typing import Optional
 
 import lancedb
+import networkx as nx
 import numpy as np
 import pyarrow as pa
 
@@ -75,6 +76,10 @@ class AgenticPipeline:
         self._entities: list[dict] = []
         self._is_initialized = False
 
+        # Knowledge Graph
+        self._kg: nx.Graph = nx.Graph()
+        self._entity_chunk_map: dict[str, set[int]] = {}  # entity_key -> {chunk_uids}
+
         # Profiling
         self._profiler: Optional[Profiler] = None
         self._use_profiling = self.config.get("prof", {}).get("use_pyinst", False)
@@ -96,13 +101,27 @@ class AgenticPipeline:
         return status
 
     def initialize(self) -> None:
-        """Initialize LanceDB and prepare directories."""
+        """Initialize LanceDB, load persisted graph, and prepare directories."""
         lancedb_uri = self.config["vect"]["lancedb_uri"]
         pathlib.Path(lancedb_uri).mkdir(parents=True, exist_ok=True)
         pathlib.Path("data/output").mkdir(parents=True, exist_ok=True)
         pathlib.Path(self.config["scraper"]["cache_path"]).mkdir(parents=True, exist_ok=True)
 
         self._lance_db = lancedb.connect(lancedb_uri)
+
+        # Load persisted knowledge graph if available
+        self._load_graph()
+
+        # Load persisted entities if available
+        store_path = pathlib.Path(self.config["ent"]["store_path"])
+        if store_path.exists() and not self._entities:
+            try:
+                with open(store_path, "r", encoding="utf-8") as f:
+                    self._entities = [json.loads(line) for line in f if line.strip()]
+                logger.info("Loaded %d entities from %s", len(self._entities), store_path)
+            except Exception as e:
+                logger.warning("Failed to load entities: %s", e)
+
         self._is_initialized = True
         logger.info("Pipeline initialized")
 
@@ -305,7 +324,17 @@ class AgenticPipeline:
         return nlp
 
     def _run_standalone_nlp(self, documents: dict[str, list[str]]) -> None:
-        """Fallback NLP using standalone spaCy with Korean support."""
+        """
+        NLP pipeline that builds a real knowledge graph.
+
+        For each chunk:
+        1. Extract entities (NER + Korean nouns)
+        2. Track entity ↔ chunk mapping
+        3. Build co-occurrence edges from sentence-level proximity
+
+        Result: NetworkX graph with entity nodes, co-occurrence edges,
+        and entity-chunk mappings for graph-based retrieval.
+        """
         try:
             import spacy
             nlp = self._load_spacy_model()
@@ -314,57 +343,163 @@ class AgenticPipeline:
             return
 
         entities: dict[str, dict] = {}
+        entity_chunk_map: dict[str, set[int]] = {}  # entity_key -> {chunk_uids}
+        cooccurrence: dict[tuple[str, str], float] = {}  # (ent_a, ent_b) -> weight
         uid = 0
+        chunk_uid = 0
 
         for source, paragraphs in documents.items():
             chunks = self.make_chunks(paragraphs)
             for chunk_text in chunks:
                 doc = nlp(chunk_text)
+                chunk_entities_all: list[str] = []  # all entity keys in this chunk
 
-                # Extract named entities from spaCy NER
-                for ent in doc.ents:
-                    key = ent.text.strip()
-                    if not key or len(key) <= 1:
-                        continue
-                    # For Korean, don't lowercase (no case distinction)
-                    norm_key = key if self._detect_language(key) == "ko" else key.lower()
-                    if norm_key not in entities:
-                        entities[norm_key] = {
-                            "uid": uid,
-                            "text": key,
-                            "label": ent.label_,
-                            "count": 0,
-                            "lemma_key": norm_key,
-                        }
-                        uid += 1
-                    entities[norm_key]["count"] += 1
+                # Process each sentence for fine-grained co-occurrence
+                sents = list(doc.sents) if doc.has_annotation("SENT_START") else [doc]
 
-                # For Korean text, also extract noun phrases heuristically
-                if self._detect_language(chunk_text) == "ko":
-                    for token in doc:
-                        if token.pos_ in ("NOUN", "PROPN") and len(token.text) > 1:
-                            key = token.text.strip()
-                            if key and key not in entities:
-                                entities[key] = {
-                                    "uid": uid,
-                                    "text": key,
-                                    "label": "NOUN",
-                                    "count": 0,
-                                    "lemma_key": key,
-                                }
-                                uid += 1
-                            if key in entities:
+                for sent in sents:
+                    sent_entities: list[str] = []
+
+                    # 1. Extract NER entities from this sentence
+                    for ent in sent.ents:
+                        key = ent.text.strip()
+                        if not key or len(key) <= 1:
+                            continue
+                        norm_key = key if self._detect_language(key) == "ko" else key.lower()
+                        if norm_key not in entities:
+                            entities[norm_key] = {
+                                "uid": uid,
+                                "text": key,
+                                "label": ent.label_,
+                                "count": 0,
+                                "lemma_key": norm_key,
+                            }
+                            uid += 1
+                        entities[norm_key]["count"] += 1
+                        sent_entities.append(norm_key)
+
+                    # 2. Korean: also extract NOUN/PROPN tokens
+                    if self._detect_language(sent.text) == "ko":
+                        for token in sent:
+                            if token.pos_ in ("NOUN", "PROPN") and len(token.text) > 1:
+                                key = token.text.strip()
+                                if not key:
+                                    continue
+                                if key not in entities:
+                                    entities[key] = {
+                                        "uid": uid,
+                                        "text": key,
+                                        "label": "NOUN",
+                                        "count": 0,
+                                        "lemma_key": key,
+                                    }
+                                    uid += 1
                                 entities[key]["count"] += 1
+                                if key not in sent_entities:
+                                    sent_entities.append(key)
 
-        # Save entity store (ensure_ascii=False for Korean)
+                    # 3. Build co-occurrence edges: all pairs within a sentence
+                    unique_sent = list(dict.fromkeys(sent_entities))  # dedupe, preserve order
+                    for i in range(len(unique_sent)):
+                        for j in range(i + 1, len(unique_sent)):
+                            a, b = unique_sent[i], unique_sent[j]
+                            pair = (min(a, b), max(a, b))  # canonical order
+                            cooccurrence[pair] = cooccurrence.get(pair, 0) + 1.0
+
+                    chunk_entities_all.extend(unique_sent)
+
+                # 4. Track entity ↔ chunk mapping
+                for ent_key in set(chunk_entities_all):
+                    if ent_key not in entity_chunk_map:
+                        entity_chunk_map[ent_key] = set()
+                    entity_chunk_map[ent_key].add(chunk_uid)
+
+                chunk_uid += 1
+
+        # ── Build NetworkX knowledge graph ──
+        kg = nx.Graph()
+
+        # Add entity nodes
+        for ent_key, ent_data in entities.items():
+            kg.add_node(ent_key, **ent_data, kind="entity")
+
+        # Add co-occurrence edges
+        for (a, b), weight in cooccurrence.items():
+            if a in kg and b in kg:
+                kg.add_edge(a, b, weight=weight, rel="co_occurrence")
+
+        # Run PageRank for entity importance
+        if kg.number_of_nodes() > 0:
+            try:
+                alpha = self.config.get("tr", {}).get("tr_alpha", 0.85)
+                pr = nx.pagerank(kg, alpha=alpha, weight="weight")
+                for node, rank in pr.items():
+                    kg.nodes[node]["rank"] = rank
+            except Exception as e:
+                logger.warning("PageRank failed: %s", e)
+
+        self._kg = kg
+        self._entity_chunk_map = entity_chunk_map
+
+        # Save entity store
         store_path = pathlib.Path(self.config["ent"]["store_path"])
         store_path.parent.mkdir(parents=True, exist_ok=True)
         with open(store_path, "w", encoding="utf-8") as f:
             for ent in entities.values():
                 f.write(json.dumps(ent, ensure_ascii=False) + "\n")
 
+        # Save graph
+        self._save_graph()
+
         self._entities = list(entities.values())
-        logger.info("Standalone NLP extracted %d entities", len(entities))
+        logger.info(
+            "NLP extracted %d entities, %d edges, %d entity-chunk links",
+            kg.number_of_nodes(), kg.number_of_edges(), sum(len(v) for v in entity_chunk_map.values()),
+        )
+
+    def _save_graph(self) -> None:
+        """Persist knowledge graph and entity-chunk map to disk."""
+        erkg_path = pathlib.Path(self.config["erkg"]["erkg_path"])
+        erkg_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Save graph as node_link JSON
+        graph_data = nx.node_link_data(self._kg)
+        with open(erkg_path, "w", encoding="utf-8") as f:
+            json.dump(graph_data, f, ensure_ascii=False)
+
+        # Save entity-chunk map
+        map_path = erkg_path.parent / "entity_chunk_map.json"
+        serializable_map = {k: list(v) for k, v in self._entity_chunk_map.items()}
+        with open(map_path, "w", encoding="utf-8") as f:
+            json.dump(serializable_map, f, ensure_ascii=False)
+
+        logger.info("Saved knowledge graph (%d nodes, %d edges) to %s",
+                    self._kg.number_of_nodes(), self._kg.number_of_edges(), erkg_path)
+
+    def _load_graph(self) -> bool:
+        """Load persisted knowledge graph. Returns True if successful."""
+        erkg_path = pathlib.Path(self.config["erkg"]["erkg_path"])
+        map_path = erkg_path.parent / "entity_chunk_map.json"
+
+        if not erkg_path.exists():
+            return False
+
+        try:
+            with open(erkg_path, "r", encoding="utf-8") as f:
+                graph_data = json.load(f)
+            self._kg = nx.node_link_graph(graph_data)
+
+            if map_path.exists():
+                with open(map_path, "r", encoding="utf-8") as f:
+                    raw_map = json.load(f)
+                self._entity_chunk_map = {k: set(v) for k, v in raw_map.items()}
+
+            logger.info("Loaded knowledge graph: %d nodes, %d edges",
+                       self._kg.number_of_nodes(), self._kg.number_of_edges())
+            return True
+        except Exception as e:
+            logger.warning("Failed to load graph: %s", e)
+            return False
 
     # ── Phase 5: RAG Query ───────────────────────────────────────────
 
@@ -543,21 +678,93 @@ class AgenticPipeline:
 
     def _graph_search(self, question: str, initial_chunks: list[dict]) -> list[dict]:
         """
-        Graph-based expansion: find related chunks through entity co-occurrence.
+        Graph-based retrieval using the knowledge graph.
 
-        GraphRAG approach:
-        1. Extract entities from initial chunks
-        2. Find other chunks containing same/related entities
-        3. Expand context with entity relationships
+        1. Find anchor entities (entities mentioned in question or initial chunks)
+        2. Traverse graph: 1-2 hop neighbors weighted by PageRank
+        3. Collect chunks linked to discovered entities via entity-chunk map
         """
-        if not initial_chunks:
+        if self._kg.number_of_nodes() == 0:
+            return self._graph_search_fallback(initial_chunks)
+
+        # Step 1: Find anchor entities from the question
+        q_lower = question.lower()
+        anchor_entities: set[str] = set()
+
+        for node in self._kg.nodes:
+            node_data = self._kg.nodes[node]
+            text = node_data.get("text", "").lower()
+            lemma = node_data.get("lemma_key", "").lower()
+            if text and len(text) > 1 and (text in q_lower or q_lower in text):
+                anchor_entities.add(node)
+            elif lemma and len(lemma) > 1 and lemma in q_lower:
+                anchor_entities.add(node)
+
+        # Also find anchors from initial chunks
+        initial_uids = {c.get("uid") for c in initial_chunks}
+        for ent_key, chunk_uids in self._entity_chunk_map.items():
+            if chunk_uids & initial_uids:  # entity appears in initial chunks
+                anchor_entities.add(ent_key)
+
+        if not anchor_entities:
+            return self._graph_search_fallback(initial_chunks)
+
+        # Step 2: Expand via graph traversal (1-2 hops)
+        expanded_entities: dict[str, float] = {}
+        for anchor in anchor_entities:
+            if anchor not in self._kg:
+                continue
+            anchor_rank = self._kg.nodes[anchor].get("rank", 0.01)
+            expanded_entities[anchor] = anchor_rank
+
+            # 1-hop neighbors
+            for neighbor in self._kg.neighbors(anchor):
+                edge_weight = self._kg[anchor][neighbor].get("weight", 1.0)
+                neighbor_rank = self._kg.nodes[neighbor].get("rank", 0.01)
+                score = neighbor_rank * edge_weight
+                expanded_entities[neighbor] = max(expanded_entities.get(neighbor, 0), score)
+
+                # 2-hop neighbors (with decay)
+                for hop2 in self._kg.neighbors(neighbor):
+                    if hop2 in anchor_entities:
+                        continue  # skip backtrack to anchors
+                    edge2_weight = self._kg[neighbor][hop2].get("weight", 1.0)
+                    hop2_rank = self._kg.nodes[hop2].get("rank", 0.01)
+                    score2 = hop2_rank * min(edge_weight, edge2_weight) * 0.5  # decay
+                    expanded_entities[hop2] = max(expanded_entities.get(hop2, 0), score2)
+
+        # Step 3: Collect chunks linked to expanded entities
+        candidate_chunks: dict[int, float] = {}  # chunk_uid -> aggregate score
+        for ent_key, ent_score in expanded_entities.items():
+            for chunk_uid in self._entity_chunk_map.get(ent_key, set()):
+                if chunk_uid in initial_uids:
+                    continue
+                candidate_chunks[chunk_uid] = candidate_chunks.get(chunk_uid, 0) + ent_score
+
+        # Rank and return top chunks
+        sorted_uids = sorted(candidate_chunks.items(), key=lambda x: x[1], reverse=True)
+
+        results = []
+        for chunk_uid, score in sorted_uids[:7]:
+            for chunk in self._chunks:
+                if chunk.get("uid") == chunk_uid:
+                    results.append({**chunk, "graph_score": round(score, 4)})
+                    break
+
+        logger.info(
+            "Graph search: %d anchors → %d expanded entities → %d candidate chunks → %d results",
+            len(anchor_entities), len(expanded_entities), len(candidate_chunks), len(results),
+        )
+        return results
+
+    def _graph_search_fallback(self, initial_chunks: list[dict]) -> list[dict]:
+        """Fallback: text-based co-occurrence when no graph is available."""
+        if not initial_chunks or not self._entities:
             return []
 
-        # Extract entities mentioned in initial chunks
         chunk_entities = set()
         for chunk in initial_chunks:
             text = chunk.get("text", "").lower()
-            # Find entities mentioned in this chunk
             for ent in self._entities:
                 ent_text = ent.get("text", "").lower()
                 if ent_text and len(ent_text) > 2 and ent_text in text:
@@ -566,98 +773,96 @@ class AgenticPipeline:
         if not chunk_entities:
             return []
 
-        logger.info("Graph expansion: found %d entities in initial chunks", len(chunk_entities))
-
-        # Find additional chunks containing these entities
-        expanded_chunks = []
         initial_uids = {c.get("uid") for c in initial_chunks}
-
+        expanded = []
         for chunk in self._chunks:
             uid = chunk.get("uid")
             if uid in initial_uids:
-                continue  # Skip already included chunks
-
+                continue
             text = chunk.get("text", "").lower()
-            # Count entity co-occurrence
             overlap = sum(1 for ent in chunk_entities if ent in text)
+            if overlap >= 2:
+                expanded.append({**chunk, "graph_score": overlap})
 
-            if overlap >= 2:  # Require at least 2 shared entities
-                expanded_chunks.append({
-                    **chunk,
-                    "graph_score": overlap,
-                })
-
-        # Sort by entity overlap
-        expanded_chunks.sort(key=lambda x: x.get("graph_score", 0), reverse=True)
-
-        logger.info("Graph expansion: found %d related chunks", len(expanded_chunks[:5]))
-        return expanded_chunks[:5]  # Top 5 graph-related chunks
+        expanded.sort(key=lambda x: x.get("graph_score", 0), reverse=True)
+        return expanded[:5]
 
     def _get_entity_context(self, question: str, chunks: list[dict] = None) -> str:
         """
-        Load entity info relevant to the question.
-        If chunks provided, also extract entity relationships.
+        Build entity context using the knowledge graph.
+
+        Includes:
+        - Matched entities with their labels and mention counts
+        - Graph relationships (connected entities via edges)
+        - PageRank importance scores
         """
-        store_path = pathlib.Path(self.config["ent"]["store_path"])
-        if not store_path.exists():
-            return ""
-
-        entities = []
-        try:
-            with open(store_path, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if line:
-                        entities.append(json.loads(line))
-        except Exception:
-            return ""
-
-        if not entities:
+        if not self._entities:
             return ""
 
         q_lower = question.lower()
 
-        # More flexible entity matching
-        matched = []
-        for e in entities:
+        # Find entities matching the question
+        matched_keys: list[str] = []
+        for e in self._entities:
             entity_text = e.get("text", "").lower()
             lemma_key = e.get("lemma_key", "").lower()
 
-            # Exact match
             if entity_text in q_lower or lemma_key in q_lower:
-                matched.append(e)
+                matched_keys.append(lemma_key)
                 continue
-
-            # Partial match (for compound words like "백신휴가")
-            if len(entity_text) > 2:
-                if entity_text in q_lower or q_lower in entity_text:
-                    matched.append(e)
-                    continue
-
-            # Word-level match
+            if len(entity_text) > 2 and (entity_text in q_lower or q_lower in entity_text):
+                matched_keys.append(lemma_key)
+                continue
             words = lemma_key.split("_")
             if any(w in q_lower for w in words if len(w) > 2):
-                matched.append(e)
+                matched_keys.append(lemma_key)
 
-        # If chunks provided, also add co-occurring entities
+        # Also match from chunk text
         if chunks:
             chunk_text = " ".join(c.get("text", "") for c in chunks).lower()
-            for e in entities:
+            for e in self._entities:
                 ent_text = e.get("text", "").lower()
                 if ent_text and len(ent_text) > 2 and ent_text in chunk_text:
-                    if e not in matched:
-                        matched.append(e)
+                    key = e.get("lemma_key", "")
+                    if key not in matched_keys:
+                        matched_keys.append(key)
 
-        # Remove duplicates and sort by count
-        matched = {e["uid"]: e for e in matched}.values()
-        matched = sorted(matched, key=lambda x: x.get("count", 0), reverse=True)
+        if not matched_keys:
+            return ""
 
+        # Build context with graph relationships
         parts = []
-        for e in matched[:15]:
-            parts.append(
-                f"- {e.get('text', e.get('lemma_key', ''))} "
-                f"[{e.get('label', '?')}] (mentions: {e.get('count', 0)})"
-            )
+        seen = set()
+
+        for key in matched_keys[:15]:
+            if key in seen:
+                continue
+            seen.add(key)
+
+            node_data = self._kg.nodes.get(key, {}) if key in self._kg else {}
+            text = node_data.get("text", key)
+            label = node_data.get("label", "?")
+            count = node_data.get("count", 0)
+            rank = node_data.get("rank", 0)
+
+            entry = f"- {text} [{label}] (mentions: {count}"
+            if rank > 0:
+                entry += f", importance: {rank:.4f}"
+            entry += ")"
+
+            # Add graph neighbors (related entities)
+            if key in self._kg and self._kg.degree(key) > 0:
+                neighbors = []
+                for nbr in self._kg.neighbors(key):
+                    edge_w = self._kg[key][nbr].get("weight", 1)
+                    nbr_text = self._kg.nodes[nbr].get("text", nbr)
+                    if edge_w >= 2:  # only show strong connections
+                        neighbors.append(f"{nbr_text}(×{int(edge_w)})")
+                if neighbors:
+                    entry += f"\n  → related: {', '.join(neighbors[:8])}"
+
+            parts.append(entry)
+
         return "\n".join(parts)
 
     # ── strwythura GraphRAG (full mode) ──────────────────────────────
@@ -777,6 +982,9 @@ class AgenticPipeline:
 
             logger.info("=" * 60)
             logger.info("  Pipeline Ready - %d chunks from %d documents", num_chunks, len(documents))
+            if self._kg.number_of_nodes() > 0:
+                logger.info("  Knowledge Graph: %d nodes, %d edges",
+                           self._kg.number_of_nodes(), self._kg.number_of_edges())
             logger.info("=" * 60)
 
             return {
@@ -784,6 +992,8 @@ class AgenticPipeline:
                 "total_paragraphs": sum(len(v) for v in documents.values()),
                 "chunks_stored": num_chunks,
                 "sources": list(documents.keys()),
+                "graph_nodes": self._kg.number_of_nodes(),
+                "graph_edges": self._kg.number_of_edges(),
             }
         finally:
             # Stop profiling and save report
@@ -799,6 +1009,8 @@ class AgenticPipeline:
         print(f"  LLM: {lm}")
         print(f"  Embeddings: {self.config['embed']['model']}")
         print(f"  Chunks loaded: {len(self._chunks)}")
+        if self._kg.number_of_nodes() > 0:
+            print(f"  Knowledge Graph: {self._kg.number_of_nodes()} nodes, {self._kg.number_of_edges()} edges")
         print(f"  Conversation memory: enabled")
         print(f"{'=' * 60}")
         print("  Type 'quit' to exit, 'clear' to reset conversation.\n")
