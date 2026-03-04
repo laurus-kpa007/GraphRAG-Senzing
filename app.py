@@ -198,7 +198,10 @@ with tab2:
 
             with st.chat_message("assistant"):
                 with st.spinner("답변 생성 중..."):
-                    result = st.session_state.pipeline.query(question)
+                    result = st.session_state.pipeline.query(
+                        question,
+                        conversation_history=st.session_state.messages,
+                    )
 
                 st.markdown(result["answer"])
                 st.caption(

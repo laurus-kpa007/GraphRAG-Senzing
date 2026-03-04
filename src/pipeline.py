@@ -9,6 +9,7 @@ import logging
 import pathlib
 import time
 import tomllib
+from datetime import datetime
 from typing import Optional
 
 import lancedb
@@ -397,7 +398,8 @@ class AgenticPipeline:
         results.sort(key=lambda x: x.get("keyword_score", 0), reverse=True)
         return results[:top_k]
 
-    def query(self, question: str, *, top_k: int = 0) -> dict:
+    def query(self, question: str, *, top_k: int = 0,
+              conversation_history: list[dict] | None = None) -> dict:
         """
         Hybrid GraphRAG query:
         1. Vector search for semantic similarity (BGE-M3)
@@ -473,31 +475,61 @@ class AgenticPipeline:
         # Detect language and generate with LLM
         lang = self._detect_language(question)
 
+        # Current date/time for temporal awareness
+        now = datetime.now()
+        now_str = now.strftime("%Y-%m-%d %H:%M:%S (%A)")
+
         if lang == "ko":
             system_prompt = (
+                f"현재 날짜와 시간: {now_str}\n\n"
                 "당신은 지식이 풍부한 도우미입니다. 제공된 컨텍스트를 기반으로 질문에 답변하세요.\n\n"
                 "중요한 규칙:\n"
                 "1. 테이블 정보가 있을 때, 질문과 정확히 일치하는 행(row)만 사용하세요.\n"
                 "2. 예를 들어 '형제자매' 또는 '누나'에 대한 질문이면, '본인'이나 '부모'의 정보는 답변에 포함하지 마세요.\n"
                 "3. 각 테이블 행은 독립적인 경우이므로, 관련 없는 행의 값을 나열하지 마세요.\n"
                 "4. 컨텍스트에 충분한 정보가 없으면 그렇다고 명확히 말하세요.\n"
-                "5. 상세하고 정확하게 한국어로 답변하세요."
+                "5. 상세하고 정확하게 한국어로 답변하세요.\n"
+                "6. 날짜, 기간, 나이 등의 계산이 필요하면 현재 날짜를 기준으로 직접 계산하세요.\n\n"
+                "추론 규칙:\n"
+                "- 숫자 계산이 필요하면 단계별로 계산 과정을 보여주세요.\n"
+                "- 여러 정보를 조합해야 하면 근거를 명시하며 논리적으로 추론하세요.\n"
+                "- 비교, 순위, 합계, 평균 등을 요청받으면 컨텍스트에서 데이터를 추출해 직접 계산하세요."
             )
         else:
             system_prompt = (
+                f"Current date and time: {now_str}\n\n"
                 "You are a knowledgeable assistant. Answer the question based on the provided context.\n\n"
                 "Important rules:\n"
                 "1. When table data is provided, only use the row(s) that exactly match the question.\n"
                 "2. For example, if asked about 'sibling' or 'sister', do NOT include information from 'self' or 'parent' rows.\n"
                 "3. Each table row represents an independent case - do not list values from unrelated rows.\n"
                 "4. If the context does not contain enough information, say so.\n"
-                "5. Be detailed and accurate. Respond in the same language as the question."
+                "5. Be detailed and accurate. Respond in the same language as the question.\n"
+                "6. When calculations involving dates, durations, or ages are needed, compute them using the current date.\n\n"
+                "Reasoning rules:\n"
+                "- If numerical calculation is needed, show step-by-step computation.\n"
+                "- If combining multiple pieces of information, state your evidence and reason logically.\n"
+                "- For comparisons, rankings, totals, or averages, extract data from context and compute directly."
             )
 
         user_prompt = f"Context:\n{context_text}\n\nQuestion: {question}\n\nAnswer:"
 
+        # Build messages for chat API (supports conversation history)
+        messages = [{"role": "system", "content": system_prompt}]
+
+        # Append conversation history for multi-turn context
+        if conversation_history:
+            # Keep last N turns to avoid exceeding context window
+            max_history_turns = self.config["rag"].get("max_history_turns", 5)
+            recent_history = conversation_history[-(max_history_turns * 2):]
+            for msg in recent_history:
+                if msg["role"] in ("user", "assistant"):
+                    messages.append({"role": msg["role"], "content": msg["content"]})
+
+        messages.append({"role": "user", "content": user_prompt})
+
         t0 = time.time()
-        answer = self.llm.generate(user_prompt, system=system_prompt)
+        answer = self.llm.chat(messages)
         elapsed = time.time() - t0
 
         return {
@@ -760,15 +792,18 @@ class AgenticPipeline:
     # ── Interactive Session ──────────────────────────────────────────
 
     def interactive(self) -> None:
-        """Run interactive Q&A session in the terminal."""
+        """Run interactive Q&A session in the terminal with conversation memory."""
         lm = self.config["rag"]["lm_name"].replace("ollama_chat/", "")
         print(f"\n{'=' * 60}")
         print(f"  GraphRAG Interactive Q&A")
         print(f"  LLM: {lm}")
         print(f"  Embeddings: {self.config['embed']['model']}")
         print(f"  Chunks loaded: {len(self._chunks)}")
+        print(f"  Conversation memory: enabled")
         print(f"{'=' * 60}")
-        print("  Type 'quit' to exit.\n")
+        print("  Type 'quit' to exit, 'clear' to reset conversation.\n")
+
+        conversation_history: list[dict] = []
 
         while True:
             try:
@@ -781,8 +816,17 @@ class AgenticPipeline:
                 continue
             if question.lower() in ("quit", "exit", "q"):
                 break
+            if question.lower() == "clear":
+                conversation_history.clear()
+                print("  [Conversation history cleared]\n")
+                continue
 
-            result = self.query(question)
+            result = self.query(question, conversation_history=conversation_history)
+
+            # Store Q&A in conversation history
+            conversation_history.append({"role": "user", "content": question})
+            conversation_history.append({"role": "assistant", "content": result["answer"]})
+
             print(f"\nA: {result['answer']}")
             print(f"   [{result['elapsed_sec']}s | {result['num_chunks']} chunks | "
                   f"sources: {', '.join(pathlib.Path(s).name for s in result['sources'])}]\n")
