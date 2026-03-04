@@ -1,29 +1,29 @@
-# Strwythura 프로젝트 구조 및 흐름도 분석
+# GraphRAG-Senzing 프로젝트 구조 및 흐름도
 
-> **프로젝트명:** Strwythura (Entity-Resolved Knowledge Graph)
-> **버전:** 2.0.3
-> **라이선스:** MIT
-> **작성자:** Paco Nathan (DerwenAI)
-> **분석일:** 2026-02-27
+> **프로젝트명:** GraphRAG-Senzing (Agentic GraphRAG Pipeline)
+> **기반 프레임워크:** strwythura v2.0.3 (DerwenAI) - 선택적 통합
+> **최종 수정일:** 2026-03-04
 
 ---
 
 ## 1. 프로젝트 개요
 
-Strwythura는 **구조화된 데이터와 비구조화된 데이터를 결합하여 Entity-Resolved Knowledge Graph를 구축**하는 Python 프레임워크입니다. "Context Engineering"을 통해 특정 도메인에 최적화된 AI 애플리케이션을 지원하며, GraphRAG(Graph-based Retrieval Augmented Generation) 파이프라인을 제공합니다.
+GraphRAG-Senzing은 **로컬 문서(.docx, .txt, .md)를 대상으로 벡터 검색 + 키워드 검색 + 그래프 기반 검색을 결합한 하이브리드 GraphRAG Q&A 시스템**입니다.
+strwythura 프레임워크를 선택적으로 활용하되, strwythura 없이도 독립적으로 동작하는 커스텀 파이프라인을 제공합니다.
 
 ### 핵심 기술 스택
 
-| 분류 | 기술 |
-|------|------|
-| Entity Resolution | Senzing SDK (gRPC) |
-| NLP/NER | spaCy, GLiNER, DSPy |
-| Graph | NetworkX, RDFlib |
-| Vector Store | LanceDB |
-| Embeddings | Gensim Word2Vec, ArrowSpace |
-| LLM | Ollama (Gemma3) |
-| Visualization | PyVis, Streamlit |
-| Observability | Opik, pyinstrument |
+| 분류 | 기술 | 비고 |
+|------|------|------|
+| LLM | Ollama (gemma3:4b/27b) | `/api/chat` 엔드포인트 사용 |
+| Embeddings | BGE-M3 via Ollama | 1024차원, 다국어 지원 |
+| Vector Store | LanceDB | 파일 기반, 서버 불필요 |
+| 문서 로딩 | python-docx, chardet | .docx, .txt, .md 지원 |
+| NLP/NER | spaCy (ko_core_news_lg) | 한국어 우선, 영어 fallback |
+| Graph | NetworkX (인메모리) | strwythura 연동 시 ERKG 활용 |
+| Web UI | Streamlit | 문서 업로드 + Q&A 채팅 |
+| Profiling | pyinstrument | 선택적 성능 프로파일링 |
+| HTTP Client | httpx | Ollama API 통신 |
 
 ---
 
@@ -31,49 +31,69 @@ Strwythura는 **구조화된 데이터와 비구조화된 데이터를 결합하
 
 ```mermaid
 graph TD
-    ROOT["strwythura/ (root)"]
+    ROOT["GraphRAG-Senzing/ (root)"]
 
-    ROOT --> CONFIG["설정 파일"]
-    ROOT --> PIPELINE["파이프라인 스크립트"]
-    ROOT --> PKG["strwythura/ (패키지)"]
-    ROOT --> MISC["기타 파일"]
+    ROOT --> SRC["src/ (핵심 소스)"]
+    ROOT --> TESTS["tests/ (테스트)"]
+    ROOT --> DATA["data/ (데이터)"]
+    ROOT --> DOCS["docs/ (문서)"]
+    ROOT --> TOOLS["tools/ (유틸리티)"]
+    ROOT --> ENTRY["진입점 & 설정"]
 
-    CONFIG --> CT["config.toml"]
-    CONFIG --> DJ["domain.json"]
-    CONFIG --> PP["pyproject.toml"]
+    SRC --> S1["pipeline.py<br/>AgenticPipeline 오케스트레이터"]
+    SRC --> S2["loaders.py<br/>DocumentLoader (docx/txt/md)"]
+    SRC --> S3["embeddings.py<br/>OllamaEmbedding + OllamaLLM"]
 
-    PIPELINE --> P1["1_er.py<br/>Entity Resolution"]
-    PIPELINE --> P2["2_sem.py<br/>Semantic Layer"]
-    PIPELINE --> P3["3_parse.py<br/>Content Parsing"]
-    PIPELINE --> P5["5_embed.py<br/>Embeddings"]
-    PIPELINE --> P6["6_vis.py<br/>Visualization"]
-    PIPELINE --> P7["7_errag.py<br/>GraphRAG"]
-    PIPELINE --> PA["app.py<br/>Streamlit UI"]
+    TESTS --> T1["test_integration.py<br/>통합 테스트 (25개)"]
 
-    PKG --> INIT["__init__.py"]
-    PKG --> CTX["ctx.py - DomainContext"]
-    PKG --> ELEM["elem.py - Elements/Models"]
-    PKG --> ENT["ent.py - EntityStore"]
-    PKG --> ERKG["erkg.py - KnowledgeGraph"]
-    PKG --> LEX["lex.py - LexicalGraph"]
-    PKG --> NLP["nlp.py - Parser"]
-    PKG --> OPT["opt.py - Optimization"]
-    PKG --> PROF["prof.py - Profiler"]
-    PKG --> RAG["rag.py - GraphRAG"]
-    PKG --> SCRAPE["scrape.py - Scraper"]
-    PKG --> VIS["vis.py - VisHTML"]
-    PKG --> WORK["work.py - Workflow"]
-    PKG --> RES["resources/ - Templates"]
+    DATA --> D1["documents/<br/>입력 문서"]
+    DATA --> D2["lancedb/<br/>벡터 저장소 (자동생성)"]
+    DATA --> D3["output/<br/>엔티티/그래프 (자동생성)"]
+    DATA --> D4["cache/<br/>스크래퍼 캐시"]
+    DATA --> D5["uploads/<br/>Streamlit 업로드"]
 
-    MISC --> LK["poetry.lock"]
-    MISC --> LT["lint.sh"]
-    MISC --> GI[".gitignore"]
-    MISC --> RM["README.md"]
+    ENTRY --> E1["run_pipeline.py<br/>CLI 실행기"]
+    ENTRY --> E2["app.py<br/>Streamlit Web UI"]
+    ENTRY --> E3["config.toml<br/>전체 설정"]
+    ENTRY --> E4["domain.json<br/>도메인 메타데이터"]
+    ENTRY --> E5["setup.sh<br/>환경 설정 스크립트"]
 
     style ROOT fill:#1a1a2e,stroke:#e94560,color:#fff
-    style PKG fill:#16213e,stroke:#0f3460,color:#fff
-    style PIPELINE fill:#0f3460,stroke:#533483,color:#fff
-    style CONFIG fill:#533483,stroke:#e94560,color:#fff
+    style SRC fill:#16213e,stroke:#0f3460,color:#fff
+    style DATA fill:#0f3460,stroke:#533483,color:#fff
+    style ENTRY fill:#533483,stroke:#e94560,color:#fff
+```
+
+### 실제 파일 트리
+
+```
+GraphRAG-Senzing/
+├── src/
+│   ├── __init__.py
+│   ├── pipeline.py          ← AgenticPipeline (메인 오케스트레이터)
+│   ├── loaders.py           ← DocumentLoader (docx/txt/md, 한글 인코딩)
+│   └── embeddings.py        ← OllamaEmbedding + OllamaLLM 클라이언트
+├── tests/
+│   ├── __init__.py
+│   └── test_integration.py  ← 통합 테스트 25개
+├── tools/
+│   ├── search_debug.py      ← 검색 디버깅 도구
+│   └── visualize_graph.py   ← 그래프 시각화 도구
+├── data/
+│   ├── documents/           ← 입력 문서 (.docx, .txt, .md)
+│   ├── lancedb/             ← LanceDB 벡터 저장소
+│   ├── output/              ← ent.json, lex.json, erkg.json
+│   ├── cache/               ← 스크래퍼 캐시
+│   └── uploads/             ← Streamlit 파일 업로드
+├── docs/                    ← 분석 문서
+├── app.py                   ← Streamlit 웹 UI
+├── run_pipeline.py          ← CLI 실행기
+├── config.toml              ← 전체 설정 파일
+├── domain.json              ← 도메인 메타데이터
+├── pyproject.toml           ← 패키지 정의
+├── requirements.txt         ← 의존성 목록
+├── setup.sh                 ← 환경 설정 스크립트
+└── README.md
 ```
 
 ---
@@ -82,107 +102,69 @@ graph TD
 
 ```mermaid
 classDiagram
-    class Workflow {
+    class AgenticPipeline {
         +config: dict
-        +thesaurus: Thesaurus
-        +scraper: Scraper
-        +dc: DomainContext
-        +load_class() classmethod
-        +load_parser()
-        +populate_semantic_layer()
-        +build_graph_backbone()
-        +make_chunks()
-        +crawl_chunk_parse()
-        +distill_knowledge_graph()
-        +load_assets()
+        +domain: dict
+        +loader: DocumentLoader
+        +embedder: OllamaEmbedding
+        +llm: OllamaLLM
+        -_lance_db: lancedb.DBConnection
+        -_lance_table: lancedb.Table
+        -_chunks: list~dict~
+        -_entities: list~dict~
+        +check_prerequisites() dict
+        +initialize()
+        +load_documents(paths) dict
+        +make_chunks(paragraphs) list
+        +embed_and_store(documents) int
+        +run_nlp_pipeline(documents)
+        +query(question, conversation_history) dict
+        +run(input_paths, skip_nlp) dict
+        +interactive()
     }
 
-    class DomainContext {
-        +entities: EntityStore
-        +erkg: KnowledgeGraph
-        +open_vector_tables()
-        +add_chunk()
-        +get_label_map()
-        +promote_data_nodes()
-        +promote_taxo_nodes()
-        +promote_er_nodes()
-        +promote_er_edges()
-        +promote_ner_nodes()
-        +link_entity_chunks()
-        +co_occur_entities()
+    class DocumentLoader {
+        +SUPPORTED_FORMATS: set
+        +KO_ENCODINGS: list
+        +load(file_path) list~str~
+        +load_directory(dir_path) dict
+        -_load_docx(path) list~str~
+        -_load_text(path) list~str~
+        -_load_markdown(path) list~str~
+        -_extract_table_text(table) list~str~
+        -_scrub(text) str
     }
 
-    class Parser {
-        +BASE_CONCEPT: str
-        +STOP_WORDS: set
-        +build_ner_pipe()
-        +normalize_pos()
-        +tokenize_lemma()
-        +transform_sentence()
-        +parse_para()
+    class OllamaEmbedding {
+        +model: str
+        +base_url: str
+        +dim: int
+        +embed_text(text) list~float~
+        +embed_batch(texts) list
+        +embed_numpy(text) ndarray
+        +is_available() bool
     }
 
-    class EntityStore {
-        +entities: OrderedDict
-        +w2v_model: Word2Vec
-        +encode_entity()
-        +load_json() / save_json()
-        +load_vec() / save_vec()
-        +train_embeddings()
-        +build_aspace()
+    class OllamaLLM {
+        +model: str
+        +base_url: str
+        +temperature: float
+        +max_tokens: int
+        +generate(prompt, system) str
+        +chat(messages) str
+        +is_available() bool
     }
 
-    class KnowledgeGraph {
-        +graph: nx.MultiDiGraph
-        +add_node()
-        +add_edge()
-        +get_node()
-        +neighbors()
-        +subgraph()
-        +shortest_paths()
-        +vis_nodes() / vis_edges()
-    }
+    AgenticPipeline --> DocumentLoader : uses
+    AgenticPipeline --> OllamaEmbedding : uses
+    AgenticPipeline --> OllamaLLM : uses
+    AgenticPipeline --> LanceDB : stores vectors
+    AgenticPipeline --> spaCy : NLP fallback
 
-    class LexicalGraph {
-        +graph: nx.MultiDiGraph
-        +increment_edge()
-        +add_sent()
-        +run_textrank()
-    }
-
-    class GraphRAG {
-        +dspy_rag: DSPy_RAG
-        +question_answer()
-        +run_errag()
-        +find_rag_chunks()
-        +find_nearby_entities()
-        +augment_anchor_nodes()
-        +perform_semantic_expansion()
-        +extract_question_subgraph()
-        +semantic_random_walk()
-    }
-
-    class Scraper {
-        +get_cache()
-        +scrub_text()
-        +scrape_html()
-    }
-
-    class VisHTML {
-        +gen_vis_html()
-        +rebuild_html()
-    }
-
-    Workflow --> DomainContext : manages
-    Workflow --> Parser : initializes
-    Workflow --> Scraper : uses
-    DomainContext --> EntityStore : contains
-    DomainContext --> KnowledgeGraph : contains
-    Parser --> DomainContext : references
-    Parser --> LexicalGraph : builds
-    GraphRAG --> Workflow : orchestrates
-    GraphRAG --> DomainContext : queries
-    VisHTML --> KnowledgeGraph : visualizes
+    style AgenticPipeline fill:#e17055,stroke:#fab1a0,color:#fff
+    style DocumentLoader fill:#0984e3,stroke:#74b9ff,color:#fff
+    style OllamaEmbedding fill:#6c5ce7,stroke:#a29bfe,color:#fff
+    style OllamaLLM fill:#00b894,stroke:#55efc4,color:#fff
 ```
 
 ---
@@ -191,88 +173,77 @@ classDiagram
 
 ```mermaid
 flowchart TB
-    subgraph PHASE1["Phase 1: Entity Resolution"]
-        ER_IN["구조화된 데이터<br/>(CSV, JSON)"]
-        SZ["Senzing SDK<br/>(gRPC)"]
-        ER_OUT["Entity Resolution<br/>결과 (JSONL)"]
-        ER_IN --> SZ --> ER_OUT
+    subgraph PHASE1["Phase 1: 문서 로딩"]
+        INPUT["로컬 문서<br/>(.docx, .txt, .md)"]
+        LOADER["DocumentLoader<br/>(python-docx, chardet)"]
+        PARAS["paragraphs[] 리스트"]
+        INPUT --> LOADER --> PARAS
     end
 
-    subgraph PHASE2["Phase 2: Semantic Layer"]
-        TAXO["도메인 Taxonomy<br/>(domain.json)"]
-        RDF["RDF/SKOS<br/>시맨틱 그래프"]
-        BACKBONE["Graph Backbone<br/>(NetworkX)"]
-        ER_OUT --> RDF
-        TAXO --> RDF
-        RDF --> BACKBONE
+    subgraph PHASE2["Phase 2: 청킹"]
+        CHUNK["make_chunks()<br/>(max 1024자)"]
+        PARAS --> CHUNK
     end
 
-    subgraph PHASE3["Phase 3: Content Parsing"]
-        DOCS["비구조화 문서<br/>(HTML, Text)"]
-        SCRAPE["Web Scraper<br/>(BeautifulSoup)"]
-        CHUNK["Text Chunking"]
-        NER["NER 추출<br/>(spaCy + GLiNER)"]
-        VECT["Vector Embedding<br/>(LanceDB)"]
-        DOCS --> SCRAPE --> CHUNK
-        CHUNK --> NER
-        CHUNK --> VECT
+    subgraph PHASE3["Phase 3: 임베딩 & 벡터 저장"]
+        BGE["BGE-M3 임베딩<br/>(1024차원, Ollama)"]
+        LANCE["LanceDB 저장<br/>(data/lancedb/)"]
+        CHUNK --> BGE --> LANCE
     end
 
-    subgraph PHASE4["Phase 4: Embeddings"]
-        LEXG["Lexical Graph<br/>(TextRank)"]
-        W2V["Word2Vec<br/>학습"]
-        DISTILL["Knowledge Graph<br/>정제"]
-        NER --> LEXG
-        LEXG --> DISTILL
-        LEXG --> W2V
+    subgraph PHASE4["Phase 4: NLP 엔티티 추출"]
+        STRW{"strwythura<br/>사용 가능?"}
+        STRW_NLP["strwythura NLP<br/>(GLiNER + spaCy)"]
+        SPACY_NLP["Standalone spaCy<br/>(ko_core_news_lg)"]
+        ENT_STORE["엔티티 저장소<br/>(data/output/ent.json)"]
+        CHUNK --> STRW
+        STRW -->|Yes| STRW_NLP --> ENT_STORE
+        STRW -->|No| SPACY_NLP --> ENT_STORE
     end
 
-    subgraph PHASE5["Phase 5: Visualization"]
-        PYVIS["PyVis HTML<br/>시각화"]
-        STREAM["Streamlit<br/>대시보드"]
-        DISTILL --> PYVIS
-        DISTILL --> STREAM
-    end
+    subgraph PHASE5["Phase 5: 하이브리드 GraphRAG Q&A"]
+        QUERY["사용자 질문"]
+        VEC_SEARCH["벡터 검색<br/>(BGE-M3 → LanceDB)"]
+        KW_SEARCH["키워드 검색<br/>(substring matching)"]
+        GRAPH_SEARCH["그래프 검색<br/>(entity co-occurrence)"]
+        MERGE["결과 병합<br/>(UID 중복제거)"]
+        LLM["LLM 응답 생성<br/>(gemma3 via Ollama /api/chat)"]
+        ANSWER["최종 답변"]
 
-    subgraph PHASE6["Phase 6: GraphRAG Q&A"]
-        QUERY["사용자 질의"]
-        ERRAG["Enhanced GraphRAG<br/>(DSPy + Ollama)"]
-        ANSWER["응답 생성"]
-        QUERY --> ERRAG
-        VECT --> ERRAG
-        DISTILL --> ERRAG
-        W2V --> ERRAG
-        ERRAG --> ANSWER
+        QUERY --> VEC_SEARCH
+        QUERY --> KW_SEARCH
+        VEC_SEARCH --> MERGE
+        KW_SEARCH --> MERGE
+        MERGE --> GRAPH_SEARCH --> MERGE
+        MERGE --> LLM --> ANSWER
     end
 
     PHASE1 --> PHASE2
     PHASE2 --> PHASE3
-    PHASE3 --> PHASE4
+    PHASE2 --> PHASE4
+    PHASE3 --> PHASE5
     PHASE4 --> PHASE5
-    PHASE4 --> PHASE6
 
     style PHASE1 fill:#1b263b,stroke:#415a77,color:#e0e1dd
     style PHASE2 fill:#1b263b,stroke:#415a77,color:#e0e1dd
     style PHASE3 fill:#1b263b,stroke:#415a77,color:#e0e1dd
     style PHASE4 fill:#1b263b,stroke:#415a77,color:#e0e1dd
     style PHASE5 fill:#1b263b,stroke:#415a77,color:#e0e1dd
-    style PHASE6 fill:#1b263b,stroke:#415a77,color:#e0e1dd
 ```
 
 ---
 
-## 5. 파이프라인 스크립트별 실행 순서
+## 5. 실행 방법 요약
 
-| 단계 | 스크립트 | 역할 | 입력 | 출력 |
-|------|----------|------|------|------|
-| 1 | `1_er.py` | Entity Resolution | 구조화 데이터셋 | ER 결과 (JSONL) |
-| 2 | `2_sem.py` | Semantic Layer 구축 | ER 결과 + Taxonomy | Thesaurus (TTL), ERKG, EntityStore |
-| 3 | `3_parse.py` | 문서 파싱 & NER | 웹 문서/텍스트 | 벡터 임베딩, 엔티티, Lexical Graph |
-| - | (4단계: Human-in-the-Loop) | 수동 큐레이션 | 추출된 엔티티 | 교정된 엔티티 |
-| 5 | `5_embed.py` | 임베딩 학습 & KG 정제 | Lexical Graph + EntityStore | Word2Vec 모델, 정제된 ERKG |
-| 6 | `6_vis.py` | 시각화 | ERKG | HTML 시각화 파일 |
-| 7 | `7_errag.py` | GraphRAG Q&A | 모든 자산 | 대화형 Q&A |
-| - | `app.py` | Streamlit 웹 UI | 모든 자산 | 웹 대시보드 |
+| 방법 | 명령어 | 설명 |
+|------|--------|------|
+| CLI 기본 | `python run_pipeline.py data/documents/` | 문서 처리 → 대화형 Q&A |
+| 특정 파일 | `python run_pipeline.py report.docx notes.txt` | 지정 파일만 처리 |
+| NLP 건너뛰기 | `python run_pipeline.py --skip-nlp data/documents/` | 벡터 검색만 (빠른 모드) |
+| 단일 질문 | `python run_pipeline.py data/documents/ --query "질문"` | 질문 후 종료 |
+| Q&A만 | `python run_pipeline.py --query-only` | 기존 데이터로 Q&A |
+| 상태 확인 | `python run_pipeline.py --check` | Ollama/모델 확인 |
+| Streamlit | `streamlit run app.py` | 웹 UI 실행 |
 
 ---
 
@@ -282,21 +253,31 @@ flowchart TB
 graph LR
     CONFIG["config.toml"]
 
-    CONFIG --> SZ["[sz]<br/>Senzing gRPC<br/>서버 설정"]
+    CONFIG --> SZ["[sz]<br/>Senzing gRPC<br/>(선택적)"]
     CONFIG --> ERKG_C["[erkg]<br/>Knowledge Graph<br/>파일 경로"]
-    CONFIG --> CTX_C["[ctx]<br/>도메인 컨텍스트<br/>클래스 설정"]
     CONFIG --> NLP_C["[nlp]<br/>spaCy 모델<br/>GLiNER 설정"]
-    CONFIG --> TR["[tr]<br/>TextRank<br/>파라미터"]
-    CONFIG --> ENT_C["[ent]<br/>Entity 저장<br/>경로 설정"]
+    CONFIG --> ENT_C["[ent]<br/>Entity 저장<br/>경로"]
     CONFIG --> VECT_C["[vect]<br/>LanceDB<br/>벡터 설정"]
-    CONFIG --> SCRAPER_C["[scraper]<br/>스크래퍼<br/>캐시 설정"]
-    CONFIG --> VIS_C["[vis]<br/>시각화<br/>출력 설정"]
     CONFIG --> RAG_C["[rag]<br/>LLM/Ollama<br/>RAG 파라미터"]
-    CONFIG --> OPIK_C["[opik]<br/>모니터링<br/>API 설정"]
+    CONFIG --> EMBED_C["[embed]<br/>BGE-M3 모델<br/>차원/URL"]
     CONFIG --> PROF_C["[prof]<br/>프로파일링<br/>설정"]
 
     style CONFIG fill:#2d3436,stroke:#636e72,color:#dfe6e9
 ```
+
+### 현재 주요 설정값
+
+| 섹션 | 키 | 값 | 설명 |
+|------|-----|-----|------|
+| `[rag]` | `lm_name` | `ollama_chat/gemma3:4b` | LLM 모델 |
+| `[rag]` | `api_base` | `http://192.168.68.68:11434` | Ollama 서버 |
+| `[rag]` | `temperature` | `0.0` | 결정적 응답 |
+| `[rag]` | `max_tokens` | `3000` | 최대 응답 토큰 |
+| `[rag]` | `max_chunks` | `11` | 검색 최대 청크 수 |
+| `[embed]` | `model` | `bge-m3:latest` | 임베딩 모델 |
+| `[embed]` | `dim` | `1024` | 임베딩 차원 |
+| `[nlp]` | `spacy_model` | `ko_core_news_lg` | spaCy 모델 |
+| `[vect]` | `chunk_size` | `1024` | 청크 최대 문자 수 |
 
 ---
 
@@ -304,43 +285,33 @@ graph LR
 
 ```mermaid
 graph TD
-    INIT["__init__.py<br/>(Public API)"]
+    CLI["run_pipeline.py<br/>(CLI 진입점)"]
+    APP["app.py<br/>(Streamlit UI)"]
 
-    INIT --> CTX_M["ctx.py"]
-    INIT --> ELEM_M["elem.py"]
-    INIT --> ENT_M["ent.py"]
-    INIT --> ERKG_M["erkg.py"]
-    INIT --> LEX_M["lex.py"]
-    INIT --> NLP_M["nlp.py"]
-    INIT --> OPT_M["opt.py"]
-    INIT --> PROF_M["prof.py"]
-    INIT --> RAG_M["rag.py"]
-    INIT --> SCRAPE_M["scrape.py"]
-    INIT --> VIS_M["vis.py"]
-    INIT --> WORK_M["work.py"]
+    CLI --> PIPELINE
+    APP --> PIPELINE
 
-    CTX_M --> ELEM_M
-    CTX_M --> ENT_M
-    CTX_M --> ERKG_M
-    CTX_M --> LEX_M
+    PIPELINE["pipeline.py<br/>AgenticPipeline"]
+    PIPELINE --> LOADERS["loaders.py<br/>DocumentLoader"]
+    PIPELINE --> EMBED["embeddings.py<br/>OllamaEmbedding"]
+    PIPELINE --> LLM_MOD["embeddings.py<br/>OllamaLLM"]
 
-    NLP_M --> CTX_M
-    NLP_M --> ELEM_M
+    PIPELINE --> LANCE_EXT["LanceDB<br/>(벡터 저장소)"]
+    PIPELINE --> SPACY_EXT["spaCy<br/>(NLP 엔티티 추출)"]
+    PIPELINE -.-> STRW_EXT["strwythura<br/>(선택적 통합)"]
 
-    RAG_M --> WORK_M
-    RAG_M --> ENT_M
+    EMBED --> OLLAMA["Ollama Server<br/>/api/embed"]
+    LLM_MOD --> OLLAMA2["Ollama Server<br/>/api/chat"]
 
-    WORK_M --> CTX_M
-    WORK_M --> NLP_M
-    WORK_M --> SCRAPE_M
+    LOADERS --> DOCX["python-docx"]
+    LOADERS --> CHARDET["chardet"]
 
-    LEX_M --> ELEM_M
-    ENT_M --> ELEM_M
-
-    style INIT fill:#6c5ce7,stroke:#a29bfe,color:#fff
-    style WORK_M fill:#e17055,stroke:#fab1a0,color:#fff
-    style RAG_M fill:#00b894,stroke:#55efc4,color:#fff
-    style CTX_M fill:#0984e3,stroke:#74b9ff,color:#fff
+    style CLI fill:#e17055,stroke:#fab1a0,color:#fff
+    style APP fill:#e17055,stroke:#fab1a0,color:#fff
+    style PIPELINE fill:#6c5ce7,stroke:#a29bfe,color:#fff
+    style LOADERS fill:#0984e3,stroke:#74b9ff,color:#fff
+    style EMBED fill:#00b894,stroke:#55efc4,color:#fff
+    style LLM_MOD fill:#00b894,stroke:#55efc4,color:#fff
 ```
 
 ---
@@ -349,48 +320,70 @@ graph TD
 
 ```mermaid
 erDiagram
+    Chunk {
+        int uid PK
+        string source
+        string text
+        float_array vector "1024-dim float32"
+    }
+
     Entity {
         int uid PK
-        string lemma_key
+        string text
         string label
-        string source
-        float rank
         int count
+        string lemma_key
     }
 
-    TextChunk {
-        int uid PK
-        string url
-        int sent_id
-        string text
-        vector embedding
+    LanceDBTable {
+        string table_name "chunk"
+        int dim "1024"
+        string uri "data/lancedb"
     }
 
-    KGNode {
-        string iri PK
-        string kind
-        string label
-        dict attributes
+    EntityStore {
+        string path "data/output/ent.json"
+        string format "JSONL"
     }
 
-    KGEdge {
-        string src FK
-        string dst FK
-        float prob
-        string rel_type
-    }
-
-    NounSpan {
-        tuple loc
-        string text
-        string label
-        string source
-    }
-
-    Entity ||--o{ NounSpan : "has spans"
-    Entity ||--o{ TextChunk : "appears in"
-    KGNode ||--o{ KGEdge : "connected by"
-    TextChunk ||--o{ Entity : "contains"
+    Chunk ||--o{ Entity : "contains"
+    LanceDBTable ||--o{ Chunk : "stores"
+    EntityStore ||--o{ Entity : "persists"
 ```
 
-이 문서는 Strwythura 프로젝트의 전체 구조, 모듈 구성, 파이프라인 흐름을 정리한 것입니다. 다음 문서에서는 블록 다이어그램과 시퀀스 다이어그램을 통해 세부 동작을 분석합니다.
+---
+
+## 9. strwythura 통합 관계
+
+현재 프로젝트는 strwythura를 **선택적 의존성**으로 취급합니다.
+
+```mermaid
+flowchart LR
+    subgraph INDEPENDENT["독립 동작 (strwythura 없이)"]
+        LOADER["DocumentLoader"]
+        BGE["OllamaEmbedding<br/>(BGE-M3)"]
+        LANCE["LanceDB"]
+        SPACY["Standalone spaCy<br/>NER"]
+        LLM["OllamaLLM<br/>(gemma3)"]
+    end
+
+    subgraph OPTIONAL["선택적 통합 (strwythura 있을 때)"]
+        STRW_WORK["strwythura.Workflow"]
+        STRW_PARSE["Parser (GLiNER + spaCy)"]
+        STRW_LEX["LexicalGraph (TextRank)"]
+        STRW_ERKG["KnowledgeGraph (ERKG)"]
+        STRW_RAG["GraphRAG (DSPy)"]
+    end
+
+    INDEPENDENT -.->|"fallback"| OPTIONAL
+
+    style INDEPENDENT fill:#00b894,stroke:#55efc4,color:#fff
+    style OPTIONAL fill:#636e72,stroke:#b2bec3,color:#fff
+```
+
+| 기능 | strwythura 없을 때 | strwythura 있을 때 |
+|------|-------------------|-------------------|
+| NLP 엔티티 추출 | standalone spaCy NER | GLiNER + spaCy 통합 |
+| 그래프 | entity co-occurrence 기반 | ERKG + LexicalGraph |
+| LLM 호출 | Ollama /api/chat 직접 | DSPy RAG Signature |
+| Q&A | 하이브리드 검색 (벡터+키워드+그래프) | Enhanced GraphRAG |

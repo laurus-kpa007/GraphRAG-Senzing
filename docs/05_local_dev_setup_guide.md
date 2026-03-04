@@ -2,7 +2,8 @@
 
 > **대상:** macOS / Linux / Windows (WSL2)
 > **Python:** 3.11 ~ 3.13
-> **GPU:** 16GB+ VRAM 권장 (gemma3:27b Q4 기준)
+> **GPU:** 4GB+ VRAM (gemma3:4b 기본), 16GB+ VRAM 권장 (gemma3:27b Q4)
+> **최종 수정일:** 2026-03-04
 
 ---
 
@@ -35,10 +36,13 @@ ollama serve &
 
 ```bash
 # 임베딩 모델 (BGE-M3, 약 1.2GB)
-ollama pull bona/bge-m3:latest
+ollama pull bge-m3:latest
 
-# LLM 모델 (Gemma3 27B, 약 15GB)
-ollama pull gemma3:27b
+# LLM 모델 - 기본 (Gemma3 4B, 약 3GB)
+ollama pull gemma3:4b
+
+# LLM 모델 - 고품질 (Gemma3 27B, 약 15GB, GPU VRAM 16GB+ 필요)
+# ollama pull gemma3:27b
 ```
 
 모델 다운로드 확인:
@@ -46,16 +50,16 @@ ollama pull gemma3:27b
 ```bash
 ollama list
 # NAME                    SIZE
-# bona/bge-m3:latest      1.2 GB
-# gemma3:27b              15 GB
+# bge-m3:latest           1.2 GB
+# gemma3:4b               3 GB
 ```
 
-**GPU VRAM이 부족한 경우** 더 작은 모델 사용 가능:
+**GPU VRAM이 충분한 경우** 더 큰 모델로 품질 향상:
 
 ```bash
-# gemma3:12b (약 7GB, 8GB VRAM에서 동작)
-ollama pull gemma3:12b
-# → config.toml에서 lm_name = "ollama_chat/gemma3:12b" 로 변경
+# gemma3:27b (약 15GB, 16GB+ VRAM 필요)
+ollama pull gemma3:27b
+# → config.toml에서 lm_name = "ollama_chat/gemma3:27b" 로 변경
 ```
 
 ### 1.3 Python 환경 구성
@@ -127,8 +131,8 @@ python run_pipeline.py --check
 
 MISSING이 있으면:
 ```
-  [MISSING] embed_model    → ollama pull bona/bge-m3:latest
-  [MISSING] llm_model      → ollama pull gemma3:27b
+  [MISSING] embed_model    → ollama pull bge-m3:latest
+  [MISSING] llm_model      → ollama pull gemma3:4b
   [MISSING] ollama_server   → ollama serve
 ```
 
@@ -179,8 +183,8 @@ python run_pipeline.py --query-only --query "Senzing은 어떤 역할을 하나�
 ```
 ============================================================
   Agentic GraphRAG Pipeline Starting
-  LLM: ollama_chat/gemma3:27b
-  Embeddings: bona/bge-m3:latest
+  LLM: ollama_chat/gemma3:4b
+  Embeddings: bge-m3:latest
 ============================================================
 09:15:01 [INFO] Prerequisites: {'ollama_server': True, 'llm_model': True, 'embed_model': True}
 09:15:01 [INFO] Pipeline initialized
@@ -197,8 +201,8 @@ python run_pipeline.py --query-only --query "Senzing은 어떤 역할을 하나�
 
 ============================================================
   GraphRAG Interactive Q&A
-  LLM: gemma3:27b
-  Embeddings: bona/bge-m3:latest
+  LLM: gemma3:4b
+  Embeddings: bge-m3:latest
   Chunks loaded: 8
 ============================================================
   Type 'quit' to exit.
@@ -243,17 +247,17 @@ streamlit run app.py --server.runOnSave true
 ```toml
 # ── LLM 변경 ──
 [rag]
-lm_name = "ollama_chat/gemma3:27b"   # 다른 모델: gemma3:12b, llama3.1:8b 등
-api_base = "http://localhost:11434"    # Ollama 서버 주소
+lm_name = "ollama_chat/gemma3:4b"    # 다른 모델: gemma3:27b, gemma3:12b 등
+api_base = "http://192.168.68.68:11434"  # Ollama 서버 주소 (로컬: http://localhost:11434)
 temperature = 0.0                      # 0.0 = 결정적, 0.7 = 창의적
 max_tokens = 3000                      # 최대 응답 길이
 max_chunks = 11                        # 검색할 최대 청크 수
 
 # ── 임베딩 모델 변경 ──
 [embed]
-model = "bona/bge-m3:latest"          # 다른 모델: nomic-embed-text 등
+model = "bge-m3:latest"               # 다른 모델: nomic-embed-text 등
 dim = 1024                             # 모델에 따라 변경 (bge-m3=1024)
-ollama_url = "http://localhost:11434"
+ollama_url = "http://192.168.68.68:11434"  # Ollama 서버 주소
 
 # ── NLP 설정 ──
 [nlp]
@@ -285,9 +289,7 @@ GPU VRAM이 8GB 이하인 경우:
 
 ```toml
 [rag]
-lm_name = "ollama_chat/gemma3:12b"    # 12B 모델 사용 (~7GB VRAM)
-# 또는
-lm_name = "ollama_chat/gemma3:4b"     # 4B 모델 사용 (~3GB VRAM)
+lm_name = "ollama_chat/gemma3:4b"     # 4B 모델 사용 (~3GB VRAM, 기본값)
 
 [embed]
 model = "nomic-embed-text:latest"      # 더 작은 임베딩 모델 (768-dim)
@@ -487,8 +489,8 @@ python run_pipeline.py data/documents/
 | 증상 | 원인 | 해결 |
 |------|------|------|
 | `[MISSING] ollama_server` | Ollama 미실행 | `ollama serve` |
-| `[MISSING] embed_model` | BGE-M3 미설치 | `ollama pull bona/bge-m3:latest` |
-| `[MISSING] llm_model` | Gemma3 미설치 | `ollama pull gemma3:27b` |
+| `[MISSING] embed_model` | BGE-M3 미설치 | `ollama pull bge-m3:latest` |
+| `[MISSING] llm_model` | Gemma3 미설치 | `ollama pull gemma3:4b` |
 | `ConnectError` | Ollama 서버 미실행 | `ollama serve` 후 재시도 |
 | 한글 깨짐 | 인코딩 문제 | 파일을 UTF-8로 저장 |
 | VRAM 부족 | 27B 모델 너무 큼 | `gemma3:12b` 또는 `gemma3:4b` 사용 |
@@ -578,8 +580,8 @@ python run_pipeline.py --skip-nlp data/documents/
 ```
 ┌─────────────────────────────────────────────────────────┐
 │  1. ollama serve                    ← Ollama 서버 시작  │
-│  2. ollama pull bona/bge-m3:latest  ← 임베딩 모델       │
-│  3. ollama pull gemma3:27b          ← LLM 모델          │
+│  2. ollama pull bge-m3:latest       ← 임베딩 모델       │
+│  3. ollama pull gemma3:4b           ← LLM 모델          │
 │  4. python run_pipeline.py --check  ← 상태 확인         │
 │  5. 문서를 data/documents/ 에 복사                       │
 │  6-A. python run_pipeline.py data/documents/   ← CLI    │

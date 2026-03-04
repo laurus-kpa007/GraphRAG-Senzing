@@ -1,7 +1,7 @@
-# Strwythura 블록 다이어그램 및 시퀀스 다이어그램
+# GraphRAG-Senzing 블록 다이어그램 및 시퀀스 다이어그램
 
-> **분석 대상:** DerwenAI/strwythura v2.0.3
-> **분석일:** 2026-02-27
+> **프로젝트:** GraphRAG-Senzing (Agentic GraphRAG Pipeline)
+> **최종 수정일:** 2026-03-04
 
 ---
 
@@ -13,43 +13,42 @@ block-beta
 
     block:INPUT:1
         columns 1
-        A["구조화 데이터\n(CSV/JSON)"]
-        B["비구조화 데이터\n(HTML/Text)"]
-        C["도메인 Taxonomy\n(domain.json)"]
+        A["워드 파일\n(.docx)"]
+        B["텍스트 파일\n(.txt)"]
+        C["마크다운 파일\n(.md)"]
     end
 
     block:PROCESSING:3
         columns 3
-        D["Entity Resolution\n(Senzing SDK)"]
-        E["Semantic Layer\n(RDFlib/SKOS)"]
-        F["NLP Pipeline\n(spaCy/GLiNER)"]
-        G["Text Chunking\n& Vectorization"]
-        H["Lexical Graph\n(TextRank)"]
-        I["KG Construction\n(NetworkX)"]
-        J["Word2Vec\n(Gensim)"]
-        K["GraphRAG\n(DSPy)"]
-        L["LLM Integration\n(Ollama)"]
+        D["DocumentLoader\n(python-docx/chardet)"]
+        E["Text Chunking\n(1024자 단위)"]
+        F["BGE-M3 Embedding\n(Ollama, 1024차원)"]
+        G["spaCy NER\n(한국어/영어)"]
+        H["Keyword Search\n(substring matching)"]
+        I["Graph Search\n(entity co-occurrence)"]
+        J["Vector Search\n(LanceDB ANN)"]
+        K["Result Merge\n(UID 중복제거)"]
+        L["LLM 응답 생성\n(Ollama /api/chat)"]
     end
 
     block:OUTPUT:1
         columns 1
-        M["Knowledge Graph"]
-        N["Vector Store"]
+        M["엔티티 저장소\n(JSONL)"]
+        N["벡터 저장소\n(LanceDB)"]
         O["Q&A 응답"]
     end
 
     A --> D
-    B --> F
-    C --> E
+    B --> D
+    C --> D
     D --> E
-    E --> I
-    F --> G
-    F --> H
-    G --> N
-    H --> I
-    H --> J
-    I --> M
+    E --> F
+    E --> G
+    F --> N
+    G --> M
     J --> K
+    H --> K
+    I --> K
     K --> L
     L --> O
 ```
@@ -64,62 +63,53 @@ block-beta
 graph TB
     subgraph PRESENTATION["프레젠테이션 계층"]
         APP["Streamlit App\n(app.py)"]
-        CLI["CLI Scripts\n(1~7_*.py)"]
-        VISHTML["HTML Visualization\n(vis.py)"]
+        CLI["CLI Runner\n(run_pipeline.py)"]
     end
 
     subgraph APPLICATION["애플리케이션 계층"]
-        WF["Workflow\n워크플로우 관리"]
-        GRAG["GraphRAG\nQ&A 엔진"]
-        DSRAG["DSPy_RAG\nLLM 인터페이스"]
+        PIPELINE["AgenticPipeline\n(pipeline.py)"]
     end
 
     subgraph DOMAIN["도메인 계층"]
-        DC["DomainContext\n도메인 컨텍스트"]
-        PARSER["Parser\nNLP 파이프라인"]
-        ES["EntityStore\n엔티티 저장소"]
+        LOADER["DocumentLoader\n(loaders.py)"]
+        EMBEDDER["OllamaEmbedding\n(embeddings.py)"]
+        LLM["OllamaLLM\n(embeddings.py)"]
     end
 
     subgraph INFRASTRUCTURE["인프라 계층"]
-        KG["KnowledgeGraph\n(NetworkX)"]
-        LG["LexicalGraph\n(TextRank)"]
-        VS["VectorStore\n(LanceDB)"]
-        SC["Scraper\n(BeautifulSoup)"]
+        LANCE["LanceDB\n(벡터 저장소)"]
+        ENT_FILE["Entity Store\n(JSONL 파일)"]
+        SPACY["spaCy\n(NER 엔진)"]
     end
 
     subgraph EXTERNAL["외부 서비스"]
-        SZ_EXT["Senzing gRPC\nServer"]
-        OLLAMA["Ollama\nLLM Server"]
-        OPIK_EXT["Opik\nObservability"]
+        OLLAMA["Ollama Server\n(/api/embed, /api/chat)"]
     end
 
-    APP --> WF
-    APP --> GRAG
-    CLI --> WF
-    CLI --> GRAG
+    subgraph OPTIONAL["선택적 (strwythura)"]
+        STRW["strwythura.Workflow"]
+    end
 
-    WF --> DC
-    WF --> PARSER
-    WF --> SC
-    GRAG --> DSRAG
-    GRAG --> DC
+    APP --> PIPELINE
+    CLI --> PIPELINE
 
-    DC --> ES
-    DC --> KG
-    DC --> VS
-    PARSER --> LG
+    PIPELINE --> LOADER
+    PIPELINE --> EMBEDDER
+    PIPELINE --> LLM
+    PIPELINE --> LANCE
+    PIPELINE --> ENT_FILE
+    PIPELINE --> SPACY
+    PIPELINE -.-> STRW
 
-    KG --> SZ_EXT
-    DSRAG --> OLLAMA
-    GRAG --> OPIK_EXT
-
-    VISHTML --> KG
+    EMBEDDER --> OLLAMA
+    LLM --> OLLAMA
 
     style PRESENTATION fill:#2d3436,stroke:#636e72,color:#dfe6e9
     style APPLICATION fill:#0984e3,stroke:#74b9ff,color:#fff
     style DOMAIN fill:#6c5ce7,stroke:#a29bfe,color:#fff
     style INFRASTRUCTURE fill:#00b894,stroke:#55efc4,color:#fff
     style EXTERNAL fill:#e17055,stroke:#fab1a0,color:#fff
+    style OPTIONAL fill:#636e72,stroke:#b2bec3,color:#dfe6e9
 ```
 
 ### 2.2 데이터 저장소 블록 구조
@@ -129,23 +119,18 @@ graph LR
     subgraph PERSISTENCE["데이터 저장소"]
         direction TB
         subgraph FILES["파일 기반"]
-            TTL["Thesaurus\n(.ttl / Turtle RDF)"]
-            JSONL["Entity Resolution\n(.jsonl)"]
-            ENTJSON["Entity Store\n(.json)"]
-            VECFILE["Entity Vectors\n(.txt)"]
-            W2VFILE["Word2Vec Model\n(.w2v)"]
-            GRAPHJSON["KG / Lexical Graph\n(.json)"]
+            ENTJSON["Entity Store\n(data/output/ent.json, JSONL)"]
+            GRAPHJSON["ERKG / Lex Graph\n(data/output/erkg.json, lex.json)"]
+            CONFIG["설정 파일\n(config.toml, domain.json)"]
         end
 
         subgraph DB["데이터베이스"]
-            LANCE["LanceDB\n(벡터 임베딩)"]
-            SQLITE["SQLite\n(스크래퍼 캐시)"]
+            LANCE["LanceDB\n(data/lancedb/, 벡터 임베딩)"]
         end
 
         subgraph MEMORY["인메모리"]
-            NX["NetworkX\nMultiDiGraph"]
-            ORDDICT["OrderedDict\n(엔티티)"]
-            RDFG["RDFlib\nGraph"]
+            CHUNKS["_chunks: list~dict~\n(uid, source, text, vector)"]
+            ENTITIES["_entities: list~dict~\n(uid, text, label, count)"]
         end
     end
 
@@ -158,394 +143,357 @@ graph LR
 
 ## 3. 시퀀스 다이어그램
 
-### 3.1 전체 파이프라인 실행 시퀀스
+### 3.1 전체 파이프라인 실행 시퀀스 (run)
 
 ```mermaid
 sequenceDiagram
     actor User as 사용자
-    participant WF as Workflow
-    participant SZ as Senzing SDK
-    participant DC as DomainContext
-    participant Parser as Parser
-    participant Scraper as Scraper
-    participant LG as LexicalGraph
-    participant KG as KnowledgeGraph
-    participant ES as EntityStore
-    participant VS as VectorStore(LanceDB)
+    participant CLI as run_pipeline.py
+    participant AP as AgenticPipeline
+    participant DL as DocumentLoader
+    participant OE as OllamaEmbedding
+    participant LDB as LanceDB
+    participant NLP as spaCy NLP
 
-    Note over User,VS: Phase 1 - Entity Resolution
-    User->>WF: 1_er.py 실행
-    WF->>SZ: SzClient 초기화 (gRPC)
-    SZ-->>WF: 연결 확인
-    WF->>SZ: entity_resolution(datasets)
-    SZ-->>WF: 해소된 엔티티 결과
-    WF->>WF: JSONL 파일로 내보내기
+    Note over User,NLP: Phase 0 - 사전 확인
+    User->>CLI: python run_pipeline.py data/documents/
+    CLI->>AP: AgenticPipeline(config.toml)
+    AP->>OE: is_available()
+    OE->>OE: GET /api/tags (모델 확인)
+    OE-->>AP: True/False
 
-    Note over User,VS: Phase 2 - Semantic Layer
-    User->>WF: 2_sem.py 실행
-    WF->>DC: open_vector_tables()
-    WF->>WF: load_parser()
-    WF->>DC: populate_semantic_layer()
-    DC->>DC: RDF/SKOS 시맨틱 그래프 구축
-    WF->>DC: build_graph_backbone()
-    DC->>KG: promote_data_nodes()
-    DC->>KG: promote_taxo_nodes()
-    DC->>KG: promote_er_nodes()
-    DC->>KG: promote_er_edges()
-    WF->>WF: Thesaurus/EntityStore/ERKG 저장
+    Note over User,NLP: Phase 1 - 초기화
+    AP->>AP: initialize()
+    AP->>LDB: lancedb.connect("data/lancedb")
+    LDB-->>AP: DB 연결
 
-    Note over User,VS: Phase 3 - Content Parsing
-    User->>WF: 3_parse.py 실행
-    WF->>WF: load_assets() (이전 결과 로드)
-    WF->>WF: crawl_chunk_parse()
-    loop 각 URL에 대해
-        WF->>Scraper: scrape_html(url)
-        Scraper-->>WF: paragraphs[]
-        WF->>WF: make_chunks(paragraphs)
-        loop 각 chunk에 대해
-            WF->>DC: add_chunk(chunk)
-            DC->>VS: 벡터 임베딩 저장
-            WF->>Parser: parse_para(text)
-            Parser->>Parser: transform_sentence()
-            Parser->>DC: encode_entity()
-            Parser->>LG: add_sent(entities)
-        end
+    Note over User,NLP: Phase 2 - 문서 로딩
+    AP->>DL: load_documents(["data/documents/"])
+    loop 각 파일
+        DL->>DL: 포맷 감지 (.docx/.txt/.md)
+        DL->>DL: 텍스트 추출 + 테이블 변환
+        DL->>DL: _scrub() 정제 (NFC 정규화)
+        DL-->>AP: paragraphs[]
     end
-    WF->>WF: EntityStore/Vectors/Graphs 저장
 
-    Note over User,VS: Phase 5 - Embeddings & KG 정제
-    User->>WF: 5_embed.py 실행
-    WF->>WF: load_assets()
-    WF->>WF: distill_knowledge_graph()
-    WF->>LG: run_textrank()
-    LG-->>WF: entity rankings
-    WF->>DC: co_occur_entities()
-    DC->>KG: 공출현 엣지 추가
-    WF->>DC: promote_ner_nodes()
-    DC->>KG: NER 노드 승격
-    WF->>ES: train_embeddings()
-    ES->>ES: Word2Vec 학습 (Skip-gram)
-    WF->>WF: 모든 자산 저장
+    Note over User,NLP: Phase 3 - 청킹 & 임베딩
+    AP->>AP: make_chunks(paragraphs, max=1024)
+    loop 각 배치 (8개씩)
+        AP->>OE: embed_batch(texts)
+        OE->>OE: POST /api/embed (BGE-M3)
+        OE-->>AP: vectors[1024-dim]
+        AP->>LDB: table.add(rows)
+    end
+
+    Note over User,NLP: Phase 4 - NLP 엔티티 추출
+    alt strwythura 사용 가능
+        AP->>AP: _run_strwythura_nlp()
+    else standalone spaCy
+        AP->>NLP: nlp(chunk_text)
+        NLP-->>AP: doc.ents (NER)
+        AP->>AP: 한국어 NOUN/PROPN 추가 추출
+        AP->>AP: ent.json 저장 (JSONL)
+    end
+
+    AP-->>CLI: summary (문서 수, 청크 수)
+    CLI-->>User: Pipeline Ready
+
+    Note over User,NLP: Phase 5 - 대화형 Q&A
+    AP->>AP: interactive()
+    loop 사용자 질문
+        User->>AP: question
+        AP->>AP: query(question, conversation_history)
+        AP-->>User: answer
+    end
 ```
 
-### 3.2 GraphRAG 질의응답 시퀀스
+### 3.2 하이브리드 GraphRAG 질의응답 시퀀스 (query)
 
 ```mermaid
 sequenceDiagram
     actor User as 사용자
-    participant GRAG as GraphRAG
-    participant DC as DomainContext
-    participant VS as VectorStore
-    participant KG as KnowledgeGraph
-    participant ES as EntityStore
-    participant W2V as Word2Vec
-    participant NER as Parser(NER)
-    participant LSH as MinHash/LSH
-    participant DSPY as DSPy_RAG
-    participant LLM as Ollama LLM
+    participant AP as AgenticPipeline
+    participant OE as OllamaEmbedding
+    participant LDB as LanceDB
+    participant KW as _keyword_search
+    participant GS as _graph_search
+    participant EC as _get_entity_context
+    participant LLM as OllamaLLM
 
-    User->>GRAG: question_answer(질문)
-    GRAG->>GRAG: qa_signature(question)
-    GRAG->>GRAG: run_errag(question)
+    User->>AP: query("질문", conversation_history)
 
-    Note over GRAG,LLM: Step 1 - Vector 유사도 검색
-    GRAG->>VS: find_rag_chunks(question)
-    VS-->>GRAG: relevant_chunks[]
+    Note over AP,LDB: Step 1 - 벡터 검색 (Semantic)
+    AP->>OE: embed_text("질문")
+    OE-->>AP: q_vec[1024]
+    AP->>LDB: table.search(q_vec).limit(11)
+    LDB-->>AP: vector_results[]
 
-    Note over GRAG,LLM: Step 2 - NER 기반 엔티티 탐색
-    GRAG->>NER: find_nearby_entities(question)
-    NER->>NER: 질문에서 엔티티 추출
-    NER->>LSH: MinHash 준비
-    NER-->>GRAG: nearby_entities[], minhashes[]
+    Note over AP,KW: Step 2 - 키워드 검색 (Term Matching)
+    AP->>KW: _keyword_search("질문", top_k=5)
+    KW->>KW: 불용어 필터링 (한국어)
+    KW->>KW: 전체 청크 순차 스캔
+    KW->>KW: substring match + score
+    KW-->>AP: keyword_results[]
 
-    Note over GRAG,LLM: Step 3 - LSH 기반 앵커 노드 필터링
-    GRAG->>LSH: augment_anchor_nodes()
-    LSH->>KG: 엔티티 노드 매칭
-    LSH-->>GRAG: anchor_nodes[]
+    Note over AP,GS: Step 3 - 결과 병합 (UID 중복제거)
+    AP->>AP: seen_uids로 중복제거
+    AP->>AP: 벡터 우선 → 키워드 추가
 
-    Note over GRAG,LLM: Step 4 - 시맨틱 확장
-    GRAG->>W2V: perform_semantic_expansion()
-    W2V->>W2V: 유사 임베딩 탐색
-    W2V-->>GRAG: expanded_nodes[]
+    Note over AP,GS: Step 4 - 그래프 확장 (Entity Co-occurrence)
+    AP->>GS: _graph_search("질문", initial_results[:5])
+    GS->>GS: 초기 청크에서 엔티티 추출
+    GS->>GS: 전체 청크에서 공유 엔티티 ≥ 2개인 청크 탐색
+    GS-->>AP: graph_results[] (최대 5개)
 
-    Note over GRAG,LLM: Step 5 - 서브그래프 추출
-    GRAG->>KG: extract_question_subgraph()
-    KG->>KG: PageRank 기반 필터링
-    KG-->>GRAG: subgraph
+    Note over AP,EC: Step 5 - 엔티티 컨텍스트 보강
+    AP->>EC: _get_entity_context("질문", chunks)
+    EC->>EC: ent.json 로드
+    EC->>EC: 질문/청크 내 엔티티 매칭
+    EC-->>AP: "[Related Entities]\n- 엔티티 [라벨] (mentions: N)"
 
-    Note over GRAG,LLM: Step 6 - 시맨틱 랜덤 워크
-    GRAG->>KG: semantic_random_walk()
-    KG->>KG: 최단 경로 생성
-    KG-->>GRAG: paths[]
+    Note over AP,LLM: Step 6 - LLM 응답 생성
+    AP->>AP: 언어 감지 (ko/en)
+    AP->>AP: 시스템 프롬프트 구성 (날짜/시간 + 추론 규칙)
+    AP->>AP: conversation_history 추가 (최근 N턴)
+    AP->>LLM: chat(messages)
+    LLM->>LLM: POST /api/chat (gemma3)
+    LLM-->>AP: answer
 
-    Note over GRAG,LLM: Step 7 - 관련 Chunk 수집
-    GRAG->>GRAG: find_chunk_neighbors()
-    GRAG->>GRAG: get_chunks_text()
-    GRAG-->>GRAG: context_text
-
-    Note over GRAG,LLM: Step 8 - LLM 응답 생성
-    GRAG->>DSPY: forward(context, question)
-    DSPY->>LLM: Ollama API 호출
-    LLM-->>DSPY: 생성된 응답
-    DSPY-->>GRAG: response
-    GRAG-->>User: 최종 답변 출력
+    AP-->>User: {answer, sources, num_chunks, elapsed_sec}
 ```
 
-### 3.3 Entity Resolution 상세 시퀀스
+### 3.3 문서 로딩 상세 시퀀스
 
 ```mermaid
 sequenceDiagram
-    participant Script as 1_er.py
-    participant WF as Workflow
-    participant SZ as SzClient
-    participant GRPC as Senzing gRPC
+    participant AP as AgenticPipeline
+    participant DL as DocumentLoader
+    participant DOCX as DocxLoader
+    participant TXT as TextLoader
+    participant MD as MarkdownLoader
 
-    Script->>WF: Workflow(config.toml)
-    WF->>WF: 설정 로드
+    AP->>DL: load(file_path)
+    DL->>DL: suffix = path.suffix.lower()
 
-    Script->>SZ: SzClient(sz_config)
-    SZ->>GRPC: gRPC 연결 (localhost:8261)
-    GRPC-->>SZ: 연결 완료
-
-    loop 각 데이터셋
-        Script->>SZ: entity_resolution(dataset)
-        SZ->>GRPC: addRecord()
-        GRPC->>GRPC: 엔티티 매칭 & 병합
-        GRPC-->>SZ: resolved entities
-    end
-
-    SZ-->>Script: 전체 ER 결과
-
-    Script->>Script: JSON 결과 출력
-    Script->>SZ: export_json_entity_report_iterator()
-    SZ-->>Script: JSONL 스트림
-    Script->>Script: JSONL 파일 저장
-```
-
-### 3.4 Content Parsing 상세 시퀀스
-
-```mermaid
-sequenceDiagram
-    participant WF as Workflow
-    participant SC as Scraper
-    participant Cache as SQLite Cache
-    participant Parser as Parser
-    participant SpaCy as spaCy Pipeline
-    participant GLiNER as GLiNER NER
-    participant DC as DomainContext
-    participant LG as LexicalGraph
-    participant VS as LanceDB
-
-    WF->>SC: scrape_html(url)
-    SC->>Cache: 캐시 확인
-    alt 캐시 히트
-        Cache-->>SC: 캐시된 HTML
-    else 캐시 미스
-        SC->>SC: HTTP GET (SSL skip)
-        SC->>Cache: 응답 저장
-    end
-    SC->>SC: BeautifulSoup 파싱
-    SC->>SC: scrub_text() 정제
-    SC-->>WF: paragraphs[]
-
-    WF->>WF: make_chunks(paragraphs, max_size=1024)
-
-    loop 각 chunk
-        WF->>DC: add_chunk(chunk_text, url)
-        DC->>VS: TextChunk 임베딩 저장
-
-        WF->>Parser: parse_para(chunk_text)
-        Parser->>SpaCy: nlp(text)
-        SpaCy-->>Parser: Doc 객체
-
-        loop 각 문장
-            Parser->>Parser: transform_sentence(sent)
-            Parser->>GLiNER: NER 추출
-            GLiNER-->>Parser: named_entities[]
-            Parser->>Parser: noun_chunks 추출
-            Parser->>Parser: token 분석
-
-            Note over Parser: 우선순위: NER > Noun Chunks > Tokens
-
-            Parser->>Parser: tokenize_lemma()
-            Parser->>DC: encode_entity(entity)
-            Parser->>LG: add_sent(entity_sequence)
+    alt .docx 파일
+        DL->>DOCX: _load_docx(path)
+        DOCX->>DOCX: Document(path) (python-docx)
+        loop 각 element in doc.element.body
+            alt CT_P (단락)
+                DOCX->>DOCX: para.text 추출
+                DOCX->>DOCX: 이미지 설명 추출 (pic:cNvPr)
+            else CT_Tbl (테이블)
+                DOCX->>DOCX: _extract_table_text()
+                DOCX->>DOCX: 헤더 감지 → [Row N] 형식 변환
+            end
         end
+        DOCX-->>DL: paragraphs[]
+
+    else .txt 파일
+        DL->>TXT: _load_text(path)
+        TXT->>TXT: chardet.detect(raw) 인코딩 감지
+        TXT->>TXT: KO_ENCODINGS 체인 시도
+        TXT->>TXT: "\n\n" 기준 단락 분리
+        TXT-->>DL: paragraphs[]
+
+    else .md 파일
+        DL->>MD: _load_markdown(path)
+        MD->>MD: 코드블록 제거 (```...```)
+        MD->>MD: 마크다운 문법 정제 (헤더, 링크, 볼드 등)
+        MD->>MD: "\n\n" 기준 단락 분리
+        MD-->>DL: paragraphs[]
     end
+
+    DL->>DL: _scrub(p) for each paragraph
+    Note over DL: NFC 정규화, 공백 정리,<br/>스마트 인용부호 변환
+    DL-->>AP: cleaned paragraphs[]
 ```
 
-### 3.5 Streamlit App 사용자 인터랙션 시퀀스
+### 3.4 Streamlit App 사용자 인터랙션 시퀀스
 
 ```mermaid
 sequenceDiagram
     actor User as 사용자
     participant ST as Streamlit UI
     participant App as app.py
-    participant GRAG as GraphRAG
-    participant LLM as Ollama LLM
-    participant Opik as Opik Dashboard
+    participant AP as AgenticPipeline
 
-    User->>ST: 앱 접속
-    ST->>App: load_assets()
-    App->>App: Workflow 초기화
-    App->>GRAG: GraphRAG 인스턴스 생성
-    App-->>ST: UI 렌더링
+    User->>ST: 앱 접속 (localhost:8501)
+    ST->>App: 페이지 렌더링
+    App->>App: config.toml 로드
+    App-->>ST: 사이드바 (모델 정보, 상태)
 
+    Note over User,AP: Tab 1 - 문서 업로드 & 파이프라인
+    User->>ST: 파일 업로드 (.docx/.txt/.md)
+    User->>ST: "파이프라인 실행" 클릭
+    ST->>App: 업로드 파일 → data/uploads/ 저장
+
+    App->>AP: AgenticPipeline()
+    App->>AP: check_prerequisites()
+    App->>AP: initialize()
+    App->>AP: load_documents(paths)
+    App->>AP: embed_and_store(documents)
+    App->>AP: run_nlp_pipeline(documents)
+    AP-->>App: pipeline ready
+    App->>ST: session_state.pipeline = pipeline
+
+    Note over User,AP: Tab 2 - Q&A 채팅
     User->>ST: 질문 입력
-    ST->>App: handle_response(question)
-    App->>GRAG: run_errag(question)
+    ST->>App: question
+    App->>AP: query(question, conversation_history=messages)
+    AP-->>App: {answer, sources, num_chunks, elapsed_sec}
+    App->>ST: 답변 표시 + 메타데이터
+    App->>ST: session_state.messages 업데이트
 
-    GRAG->>GRAG: Vector 검색 + Entity 탐색
-    GRAG->>GRAG: 서브그래프 추출
-    GRAG->>LLM: DSPy forward()
-    LLM-->>GRAG: 응답 텍스트
-
-    GRAG->>Opik: 트레이스 기록
-    GRAG-->>App: response + analytics
-
-    App->>ST: 채팅 메시지 표시
-    App->>ST: 분석 차트 표시
-    ST-->>User: 응답 + 시각화
-
-    User->>ST: 피드백 (별점)
-    ST->>Opik: 피드백 기록
+    Note over User,AP: Tab 3 - 시스템 상태
+    User->>ST: "상태 확인" 클릭
+    ST->>AP: check_prerequisites()
+    AP-->>ST: {ollama_server, llm_model, embed_model}
+    ST->>ST: 엔티티/벡터 저장소 상태 표시
 ```
 
 ---
 
-## 4. TextRank 알고리즘 블록 다이어그램
-
-```mermaid
-graph TB
-    subgraph TEXTRANK["TextRank 알고리즘 흐름"]
-        INPUT_SENT["입력 문장들"]
-        TOKEN["토큰화 & 레마화"]
-        COOCCUR["공출현 관계 추출<br/>(lookback=3)"]
-        LEXGRAPH["Lexical Graph 구축<br/>(MultiDiGraph)"]
-        EIGENVEC["고유벡터 중심성 계산<br/>(Personalized PageRank)"]
-        QUANTILE["분위수 스트라이핑<br/>(정규화)"]
-        RANKING["엔티티 랭킹 결과<br/>(DataFrame)"]
-
-        INPUT_SENT --> TOKEN
-        TOKEN --> COOCCUR
-        COOCCUR --> LEXGRAPH
-        LEXGRAPH --> EIGENVEC
-        EIGENVEC --> QUANTILE
-        QUANTILE --> RANKING
-    end
-
-    subgraph PARAMS["파라미터"]
-        ALPHA["alpha = 0.85"]
-        LOOKBACK["lookback = 3"]
-        AMPLITUDE["amplitude = 4"]
-    end
-
-    ALPHA --> EIGENVEC
-    LOOKBACK --> COOCCUR
-    AMPLITUDE --> QUANTILE
-
-    style TEXTRANK fill:#1b263b,stroke:#415a77,color:#e0e1dd
-    style PARAMS fill:#2d3436,stroke:#636e72,color:#dfe6e9
-```
-
----
-
-## 5. Enhanced GraphRAG 검색 파이프라인 블록 다이어그램
+## 4. 하이브리드 검색 파이프라인 블록 다이어그램
 
 ```mermaid
 graph TB
     QUESTION["사용자 질문"]
 
-    subgraph RETRIEVAL["다중 검색 전략"]
+    subgraph RETRIEVAL["3단계 검색"]
         direction TB
 
-        subgraph VEC_SEARCH["벡터 유사도 검색"]
-            VS_Q["질문 임베딩"]
-            VS_S["LanceDB 검색"]
-            VS_R["관련 Chunks"]
+        subgraph VEC_SEARCH["1. 벡터 검색 (Semantic)"]
+            VS_Q["질문 임베딩\n(BGE-M3, 1024-dim)"]
+            VS_S["LanceDB ANN 검색"]
+            VS_R["관련 Chunks\n(top_k=11)"]
             VS_Q --> VS_S --> VS_R
         end
 
-        subgraph ENTITY_SEARCH["엔티티 기반 검색"]
-            NER_Q["질문 NER 추출"]
-            MINHASH["MinHash 생성"]
-            LSH_F["LSH 필터링"]
-            ANCHOR["앵커 노드 선정"]
-            NER_Q --> MINHASH --> LSH_F --> ANCHOR
+        subgraph KW_SEARCH["2. 키워드 검색 (Term Matching)"]
+            KW_STOP["한국어 불용어 필터링"]
+            KW_SCAN["전체 청크 순차 스캔\nsubstring match"]
+            KW_RANK["점수 기반 정렬"]
+            KW_STOP --> KW_SCAN --> KW_RANK
         end
 
-        subgraph SEMANTIC_EXP["시맨틱 확장"]
-            W2V_Q["Word2Vec\n유사도 검색"]
-            EXPAND["이웃 노드 확장"]
-            W2V_Q --> EXPAND
+        subgraph GRAPH_SEARCH["3. 그래프 검색 (Entity Co-occurrence)"]
+            GS_ENT["초기 청크에서\n엔티티 추출"]
+            GS_FIND["공유 엔티티 ≥ 2개인\n추가 청크 탐색"]
+            GS_TOP["상위 5개 반환"]
+            GS_ENT --> GS_FIND --> GS_TOP
         end
     end
 
-    subgraph GRAPH_OPS["그래프 연산"]
-        SUBGRAPH["서브그래프 추출\n(PageRank)"]
-        RANDOM_WALK["시맨틱 랜덤 워크\n(최단 경로)"]
-        CHUNK_NEIGHBOR["Chunk 이웃 탐색"]
-        SUBGRAPH --> RANDOM_WALK --> CHUNK_NEIGHBOR
+    subgraph MERGE["결과 병합"]
+        DEDUP["UID 중복 제거"]
+        PRIORITY["우선순위: 벡터 > 키워드 > 그래프"]
+        LIMIT["top_k 제한 (기본 11)"]
+        DEDUP --> PRIORITY --> LIMIT
+    end
+
+    subgraph AUGMENT["컨텍스트 보강"]
+        ENT_CTX["엔티티 컨텍스트\n(ent.json 매칭)"]
+        TIME_CTX["현재 날짜/시간 주입"]
+        REASON["추론 규칙 프롬프트"]
     end
 
     subgraph GENERATION["응답 생성"]
-        CONTEXT["컨텍스트 조합"]
-        DSPY_FWD["DSPy RAG\nSignature"]
-        LLM_CALL["Ollama LLM\n호출"]
+        LANG["언어 감지\n(한국어/영어)"]
+        SYS_PROMPT["시스템 프롬프트 구성"]
+        HISTORY["대화 이력 추가\n(최근 N턴)"]
+        OLLAMA_CALL["Ollama /api/chat\n(gemma3)"]
         RESPONSE["최종 응답"]
-        CONTEXT --> DSPY_FWD --> LLM_CALL --> RESPONSE
+        LANG --> SYS_PROMPT --> HISTORY --> OLLAMA_CALL --> RESPONSE
     end
 
     QUESTION --> VEC_SEARCH
-    QUESTION --> ENTITY_SEARCH
-    QUESTION --> SEMANTIC_EXP
+    QUESTION --> KW_SEARCH
 
-    VS_R --> GRAPH_OPS
-    ANCHOR --> GRAPH_OPS
-    EXPAND --> GRAPH_OPS
+    VS_R --> MERGE
+    KW_RANK --> MERGE
+    MERGE --> GRAPH_SEARCH
+    GS_TOP --> MERGE
 
-    CHUNK_NEIGHBOR --> GENERATION
+    LIMIT --> AUGMENT
+    AUGMENT --> GENERATION
 
     style RETRIEVAL fill:#1b263b,stroke:#415a77,color:#e0e1dd
-    style GRAPH_OPS fill:#0984e3,stroke:#74b9ff,color:#fff
+    style MERGE fill:#0984e3,stroke:#74b9ff,color:#fff
+    style AUGMENT fill:#6c5ce7,stroke:#a29bfe,color:#fff
     style GENERATION fill:#00b894,stroke:#55efc4,color:#fff
 ```
 
 ---
 
-## 6. 엔티티 처리 우선순위 블록 다이어그램
+## 5. NLP 엔티티 추출 흐름 (standalone spaCy)
+
+```mermaid
+flowchart TD
+    INPUT["문서 청크 리스트"]
+
+    subgraph SPACY_LOAD["spaCy 모델 로딩"]
+        TRY1["설정된 모델 시도\n(ko_core_news_lg)"]
+        TRY2["한국어 모델 fallback\n(ko_core_news_md/sm)"]
+        TRY3["영어 모델 fallback\n(en_core_web_md/sm)"]
+        TRY4["Blank 모델\n(xx + sentencizer)"]
+        TRY1 -->|실패| TRY2 -->|실패| TRY3 -->|실패| TRY4
+    end
+
+    subgraph PER_CHUNK["청크별 처리"]
+        NER_EXT["doc.ents 추출\n(Named Entity Recognition)"]
+        LANG_DET["언어 감지\n_detect_language()"]
+        KO_NOUN["한국어: NOUN/PROPN\n토큰 추가 추출"]
+        NORM["정규화\n(한국어: 원문, 영어: lowercase)"]
+    end
+
+    subgraph OUTPUT["출력"]
+        ENT_DICT["entities dict\n{text, label, count, lemma_key}"]
+        ENT_FILE["data/output/ent.json\n(JSONL, ensure_ascii=False)"]
+    end
+
+    INPUT --> SPACY_LOAD --> PER_CHUNK
+    NER_EXT --> NORM
+    LANG_DET -->|ko| KO_NOUN --> NORM
+    NORM --> ENT_DICT --> ENT_FILE
+
+    style SPACY_LOAD fill:#e17055,stroke:#fab1a0,color:#fff
+    style PER_CHUNK fill:#0984e3,stroke:#74b9ff,color:#fff
+    style OUTPUT fill:#00b894,stroke:#55efc4,color:#fff
+```
+
+---
+
+## 6. LLM 프롬프트 구조
 
 ```mermaid
 graph TD
-    INPUT["입력 텍스트 (문장)"]
-
-    subgraph PRIORITY["엔티티 추출 우선순위"]
-        direction LR
-        P1["1순위: NER 엔티티\n(GLiNER/spaCy NER)"]
-        P2["2순위: Noun Chunks\n(spaCy 명사구)"]
-        P3["3순위: Individual Tokens\n(개별 토큰)"]
-        P1 --> P2 --> P3
+    subgraph SYSTEM_PROMPT["시스템 프롬프트"]
+        TIME["현재 날짜/시간\n2026-03-04 09:15:00 (Tuesday)"]
+        ROLE["역할 정의\n지식이 풍부한 도우미"]
+        RULES["중요 규칙 (6개)\n테이블 행 구분, 컨텍스트 기반"]
+        REASONING["추론 규칙 (3개)\n단계별 계산, 논리적 추론, 직접 계산"]
     end
 
-    subgraph OVERLAP["겹침 해소 규칙"]
-        O1["within_loc():\n포함 관계 확인"]
-        O2["overlaps_loc():\n겹침 관계 확인"]
-        O3["높은 우선순위 유지\n낮은 우선순위 제거"]
+    subgraph USER_PROMPT["사용자 프롬프트"]
+        CONTEXT["Context:\n검색된 청크 텍스트\n---\n[Related Entities]\n엔티티 목록"]
+        QUESTION["Question: 사용자 질문"]
+        ANSWER_TAG["Answer:"]
     end
 
-    subgraph OUTPUT_ENT["출력"]
-        LEMMA["레마화된 키"]
-        ENTITY_OBJ["Entity 객체 생성"]
-        ENCODE["EntityStore 등록"]
+    subgraph MESSAGES["Chat Messages 배열"]
+        MSG_SYS["system: 시스템 프롬프트"]
+        MSG_HIST["user/assistant: 대화 이력\n(최근 max_history_turns턴)"]
+        MSG_USER["user: Context + Question"]
     end
 
-    INPUT --> PRIORITY
-    PRIORITY --> OVERLAP
-    OVERLAP --> OUTPUT_ENT
+    SYSTEM_PROMPT --> MSG_SYS
+    USER_PROMPT --> MSG_USER
+    MSG_SYS --> MESSAGES
+    MSG_HIST --> MESSAGES
+    MSG_USER --> MESSAGES
 
-    style PRIORITY fill:#6c5ce7,stroke:#a29bfe,color:#fff
-    style OVERLAP fill:#e17055,stroke:#fab1a0,color:#fff
-    style OUTPUT_ENT fill:#00b894,stroke:#55efc4,color:#fff
+    style SYSTEM_PROMPT fill:#6c5ce7,stroke:#a29bfe,color:#fff
+    style USER_PROMPT fill:#0984e3,stroke:#74b9ff,color:#fff
+    style MESSAGES fill:#00b894,stroke:#55efc4,color:#fff
 ```
-
-이 문서는 Strwythura의 주요 컴포넌트 간 상호작용과 데이터 흐름을 시퀀스/블록 다이어그램으로 상세히 분석한 자료입니다.
